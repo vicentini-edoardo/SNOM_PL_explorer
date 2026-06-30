@@ -1,0 +1,6 @@
+h5py
+numpy
+PyQt6
+pyqtgraph
+pytest
+pytest-qt
