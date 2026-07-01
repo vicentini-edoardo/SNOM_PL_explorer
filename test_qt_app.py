@@ -12,6 +12,16 @@ from app import ImagePlotWidget, MainWindow
 from test_app_model import _write_grid_scan
 
 
+def _load_scan_and_wait(window: MainWindow, qtbot, recompute: bool = True) -> None:
+    window.load_selected_scan(recompute=recompute)
+    qtbot.waitUntil(lambda: not window.is_busy and window.model.bundle is not None, timeout=15000)
+
+
+def _compute_decomposition_and_wait(window: MainWindow, qtbot) -> None:
+    window.compute_decomposition()
+    qtbot.waitUntil(lambda: not window.is_busy and window.last_decomposition is not None, timeout=15000)
+
+
 @pytest.mark.usefixtures("qapp")
 def test_main_window_launches_without_scan(qtbot, tmp_path):
     window = MainWindow(root_dir=tmp_path)
@@ -41,7 +51,7 @@ def test_loading_scan_initializes_controls_and_plots(qtbot, tmp_path):
     window = MainWindow(root_dir=tmp_path)
     qtbot.addWidget(window)
 
-    window.load_selected_scan(recompute=True)
+    _load_scan_and_wait(window, qtbot)
 
     assert window.model.bundle is not None
     assert window.roi_start_spin.value() == 1
@@ -107,7 +117,7 @@ def test_line_profile_previews_show_source_maps_and_selected_rows(qtbot, tmp_pat
     window = MainWindow(root_dir=tmp_path)
     qtbot.addWidget(window)
 
-    window.load_selected_scan(recompute=True)
+    _load_scan_and_wait(window, qtbot)
     window.row_start_spin.setValue(0)
     window.row_end_spin.setValue(1)
     window.refresh_plots()
@@ -169,7 +179,7 @@ def test_map_pixel_signal_updates_selection_and_inspector(qtbot, tmp_path):
     _write_grid_scan(tmp_path / "mini.h5")
     window = MainWindow(root_dir=tmp_path)
     qtbot.addWidget(window)
-    window.load_selected_scan(recompute=True)
+    _load_scan_and_wait(window, qtbot)
 
     assert window.maps_tab.m1p_map.default_cmap == "CET-C1"
     window.maps_tab.primary_map.pixel_selected.emit(0, 1)
@@ -184,9 +194,9 @@ def test_decomposition_button_populates_category_plot(qtbot, tmp_path):
     _write_grid_scan(tmp_path / "mini.h5")
     window = MainWindow(root_dir=tmp_path)
     qtbot.addWidget(window)
-    window.load_selected_scan(recompute=True)
+    _load_scan_and_wait(window, qtbot)
 
-    window.compute_decomposition()
+    _compute_decomposition_and_wait(window, qtbot)
 
     assert window.last_decomposition is not None
     assert window.decomposition_tab.category_map.image is not None

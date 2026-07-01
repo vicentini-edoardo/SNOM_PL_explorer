@@ -14,6 +14,7 @@ from app_model import MapSettings, SnomAppModel
 from gui.plotting import CAT_PALETTE, ImagePlotWidget
 from gui.tabs import DecompositionTab, LineProfileTab, MapsInspectorTab
 from gui.theme import apply_theme
+from gui.workers import Worker
 from snom_pipeline import BG_HIGH_HZ, BG_LOW_HZ, HARMONICS
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
@@ -32,8 +33,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.model = SnomAppModel(root_dir)
         self._loading_controls = False
         self.last_decomposition = None
+        self._thread_pool = QtCore.QThreadPool.globalInstance()
+        self._busy = False
 
         self.status_label = QtWidgets.QLabel("No scan loaded")
+        self.progress_bar = QtWidgets.QProgressBar()
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.hide()
         self.selected_label = QtWidgets.QLabel("ix=-- iy=--")
         self.folder_combo = QtWidgets.QComboBox()
         self.file_combo = QtWidgets.QComboBox()
@@ -134,6 +140,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self._add_row(source_form, "Scan file", self.file_combo)
         source_form.addRow(source_row)
         self._add_row(source_form, "Status", self.status_label)
+        source_form.addRow(self.progress_bar)
         self._add_row(source_form, "Selected", self.selected_label)
 
         demod_group, demod_form = self._section_form("Demodulation")
@@ -315,24 +322,56 @@ class MainWindow(QtWidgets.QMainWindow):
             self.model.set_root_dir(Path(selected))
             self.refresh_source_controls()
 
+    @property
+    def is_busy(self) -> bool:
+        return self._busy
+
+    def _set_busy(self, busy: bool, message: str | None = None) -> None:
+        self._busy = busy
+        for button in (self.load_btn, self.recompute_btn, self.decomp_compute_btn, self.export_btn):
+            button.setEnabled(not busy)
+        if busy:
+            self.progress_bar.setRange(0, 0)  # indeterminate until first progress report
+            self.progress_bar.show()
+            if message:
+                self.status_label.setText(message)
+        else:
+            self.progress_bar.hide()
+
+    def _on_worker_progress(self, fraction: float, message: str) -> None:
+        if self.progress_bar.maximum() == 0:
+            self.progress_bar.setRange(0, 100)
+        self.progress_bar.setValue(int(fraction * 100))
+
+    def _start_worker(self, worker: Worker, on_finished, on_error) -> None:
+        worker.signals.progress.connect(self._on_worker_progress)
+        worker.signals.finished.connect(on_finished)
+        worker.signals.error.connect(on_error)
+        self._thread_pool.start(worker)
+
     def load_selected_scan(self, recompute: bool = False) -> None:
+        if self._busy:
+            return
         folder = self.folder_combo.currentText()
         filename = self.file_combo.currentText()
         if not folder or not filename:
             self.status_label.setText("No scan loaded")
             return
-        self.status_label.setText("Processing...")
-        QtWidgets.QApplication.processEvents()
-        try:
-            summary = self.model.load_scan(folder, filename, recompute=recompute)
-        except Exception as exc:
-            self.status_label.setText(f"Load failed: {exc}")
-            return
+        self._set_busy(True, "Processing...")
+        worker = Worker(self.model.load_scan, folder, filename, recompute=recompute, wants_progress=True)
+        self._start_worker(worker, self._on_scan_loaded, self._on_scan_failed)
+
+    def _on_scan_loaded(self, summary) -> None:
+        self._set_busy(False)
         self._reset_colorbar_locks()
         self._sync_controls_from_model()
         self.status_label.setText(f"{summary.status}: {summary.path.name}")
         self.metadata_text.setPlainText(json.dumps(summary.metadata, indent=2, sort_keys=True))
         self.refresh_plots()
+
+    def _on_scan_failed(self, exc: Exception) -> None:
+        self._set_busy(False)
+        self.status_label.setText(f"Load failed: {exc}")
 
     def _reset_colorbar_locks(self) -> None:
         for widget in [
@@ -387,7 +426,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
 
     def refresh_plots(self) -> None:
-        if self._loading_controls or self.model.bundle is None:
+        if self._loading_controls or self._busy or self.model.bundle is None:
             return
         settings = self._current_settings()
         maps = self.model.compute_maps(settings)
@@ -458,7 +497,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.refresh_plots()
 
     def compute_decomposition(self) -> None:
-        if self.model.bundle is None:
+        if self.model.bundle is None or self._busy:
             return
         preprocess = []
         if self.decomp_bgsub_check.isChecked():
@@ -468,7 +507,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.decomp_standardize_check.isChecked():
             preprocess.append("standardize")
         settings = self._current_settings()
-        result = self.model.compute_decomposition(
+        self._set_busy(True, "Decomposing...")
+        worker = Worker(
+            self.model.compute_decomposition,
             harmonic=self.decomp_harmonic_combo.currentData() or "1w",
             method=self.decomp_method_combo.currentText() or "PCA",
             n_components=self.decomp_components_spin.value(),
@@ -478,7 +519,17 @@ class MainWindow(QtWidgets.QMainWindow):
             detector_range=(self.detector_start_spin.value(), self.detector_end_spin.value()),
             settings=settings,
         )
+        self._start_worker(worker, self._on_decomposition_done, self._on_decomposition_failed)
+
+    def _on_decomposition_done(self, result) -> None:
+        self._set_busy(False)
+        if self.model.summary is not None:
+            self.status_label.setText(f"Decomposition done: {self.model.summary.path.name}")
         self._show_decomposition(result)
+
+    def _on_decomposition_failed(self, exc: Exception) -> None:
+        self._set_busy(False)
+        self.status_label.setText(f"Decomposition failed: {exc}")
 
     def _show_decomposition(self, result) -> None:
         self.last_decomposition = result
