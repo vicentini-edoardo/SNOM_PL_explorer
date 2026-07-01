@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import os
 import sys
 from pathlib import Path
 
@@ -21,6 +22,22 @@ ROOT_DIR = Path(__file__).resolve().parents[1]
 CONTROL_LABEL_WIDTH = 92
 CONTROL_FIELD_MIN_WIDTH = 110
 DEMOD_LABELS = {"0w": "0omega (DC)", "1w": "1omega", "2w": "2omega", "3w": "3omega"}
+SETTINGS_DISABLE_ENV = "SNOM_PL_NO_SETTINGS"
+SETTINGS_FILE_ENV = "SNOM_PL_SETTINGS_FILE"
+
+
+def open_settings() -> QtCore.QSettings | None:
+    """Session settings store, or None when persistence is disabled.
+
+    SNOM_PL_NO_SETTINGS=1 disables persistence entirely (used by tests);
+    SNOM_PL_SETTINGS_FILE overrides the storage location with an ini file.
+    """
+    if os.environ.get(SETTINGS_DISABLE_ENV):
+        return None
+    custom_path = os.environ.get(SETTINGS_FILE_ENV)
+    if custom_path:
+        return QtCore.QSettings(custom_path, QtCore.QSettings.Format.IniFormat)
+    return QtCore.QSettings("SNOM_PL_explorer", "SNOM Explorer")
 
 
 class MainWindow(QtWidgets.QMainWindow):
@@ -97,6 +114,102 @@ class MainWindow(QtWidgets.QMainWindow):
         self._wire_signals()
         self._populate_static_controls()
         self.refresh_source_controls()
+        self._restore_session(root_dir)
+
+    def _restore_session(self, root_dir: Path) -> None:
+        settings = open_settings()
+        if settings is None:
+            return
+        geometry = settings.value("window/geometry")
+        if geometry is not None:
+            self.restoreGeometry(geometry)
+        for key, splitter in (
+            ("window/main_splitter", self.main_splitter),
+            ("window/explore_splitter", self.explore_tab.splitter),
+        ):
+            state = settings.value(key)
+            if state is not None:
+                splitter.restoreState(state)
+        if Path(root_dir) == ROOT_DIR:
+            saved_root = settings.value("session/root_dir", "", str)
+            if saved_root and Path(saved_root).is_dir():
+                self.model.set_root_dir(Path(saved_root))
+                self.refresh_source_controls()
+        self._loading_controls = True
+        try:
+            for key, combo in (
+                ("session/folder", self.folder_combo),
+                ("session/file", self.file_combo),
+                ("params/export_format", self.export_format_combo),
+                ("decomp/method", self.decomp_method_combo),
+                ("decomp/categorizer", self.decomp_categorizer_combo),
+            ):
+                index = combo.findText(settings.value(key, "", str))
+                if index >= 0:
+                    combo.setCurrentIndex(index)
+            for key, combo in (
+                ("params/harmonic", self.harmonic_combo),
+                ("params/compare_harmonic", self.compare_combo),
+                ("decomp/harmonic", self.decomp_harmonic_combo),
+            ):
+                index = combo.findData(settings.value(key, "", str))
+                if index >= 0:
+                    combo.setCurrentIndex(index)
+            for key, spin in self._persisted_spins():
+                value = settings.value(key)
+                if value is not None:
+                    spin.setValue(type(spin.value())(value))
+            for key, check in self._persisted_checks():
+                check.setChecked(settings.value(key, check.isChecked(), bool))
+        finally:
+            self._loading_controls = False
+
+    def _save_session(self) -> None:
+        settings = open_settings()
+        if settings is None:
+            return
+        settings.setValue("window/geometry", self.saveGeometry())
+        settings.setValue("window/main_splitter", self.main_splitter.saveState())
+        settings.setValue("window/explore_splitter", self.explore_tab.splitter.saveState())
+        settings.setValue("session/root_dir", str(self.model.root_dir))
+        settings.setValue("session/folder", self.folder_combo.currentText())
+        settings.setValue("session/file", self.file_combo.currentText())
+        settings.setValue("params/export_format", self.export_format_combo.currentText())
+        settings.setValue("decomp/method", self.decomp_method_combo.currentText())
+        settings.setValue("decomp/categorizer", self.decomp_categorizer_combo.currentText())
+        settings.setValue("params/harmonic", self.harmonic_combo.currentData())
+        settings.setValue("params/compare_harmonic", self.compare_combo.currentData())
+        settings.setValue("decomp/harmonic", self.decomp_harmonic_combo.currentData())
+        for key, spin in self._persisted_spins():
+            settings.setValue(key, spin.value())
+        for key, check in self._persisted_checks():
+            settings.setValue(key, check.isChecked())
+        settings.sync()
+
+    def _persisted_spins(self) -> list[tuple[str, QtWidgets.QAbstractSpinBox]]:
+        return [
+            ("params/neighbor_bins", self.neighbor_bins_spin),
+            ("params/bg_low_hz", self.bg_low_spin),
+            ("params/bg_high_hz", self.bg_high_spin),
+            ("params/baseline_smooth_px", self.baseline_smooth_spin),
+            ("params/background_neighbor_px", self.background_neighbor_spin),
+            ("decomp/components", self.decomp_components_spin),
+            ("decomp/clusters", self.decomp_clusters_spin),
+        ]
+
+    def _persisted_checks(self) -> list[tuple[str, QtWidgets.QCheckBox]]:
+        return [
+            ("params/avg3x3", self.avg3x3_check),
+            ("params/fft_bgsub", self.fft_bgsub_check),
+            ("decomp/bgsub", self.decomp_bgsub_check),
+            ("decomp/l2norm", self.decomp_l2_check),
+            ("decomp/standardize", self.decomp_standardize_check),
+            ("decomp/normalize_spectra", self.decomp_normalize_spectra_check),
+        ]
+
+    def closeEvent(self, event: QtGui.QCloseEvent) -> None:
+        self._save_session()
+        super().closeEvent(event)
 
     def _fit_window_to_screen(self) -> None:
         screen = QtGui.QGuiApplication.primaryScreen()

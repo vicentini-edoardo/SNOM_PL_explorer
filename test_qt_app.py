@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("SNOM_PL_NO_SETTINGS", "1")
 
 import pytest
 import numpy as np
@@ -187,6 +188,28 @@ def test_map_pixel_signal_updates_selection_and_inspector(qtbot, tmp_path):
     assert window.model.selected_pixel == (0, 1)
     assert "ix=0 iy=1" in window.selected_label.text()
     assert window.inspector_tab.roi_curve.xData is not None
+
+
+@pytest.mark.usefixtures("qapp")
+def test_session_settings_roundtrip(qtbot, tmp_path, monkeypatch):
+    monkeypatch.delenv("SNOM_PL_NO_SETTINGS", raising=False)
+    monkeypatch.setenv("SNOM_PL_SETTINGS_FILE", str(tmp_path / "session.ini"))
+
+    window = MainWindow(root_dir=tmp_path)
+    qtbot.addWidget(window)
+    window.bg_low_spin.setValue(12.5)
+    window.harmonic_combo.setCurrentIndex(2)
+    window.avg3x3_check.setChecked(False)
+    window.decomp_clusters_spin.setValue(7)
+    window._save_session()
+
+    restored = MainWindow(root_dir=tmp_path)
+    qtbot.addWidget(restored)
+
+    assert restored.bg_low_spin.value() == 12.5
+    assert restored.harmonic_combo.currentData() == "2w"
+    assert restored.avg3x3_check.isChecked() is False
+    assert restored.decomp_clusters_spin.value() == 7
 
 
 @pytest.mark.usefixtures("qapp")
