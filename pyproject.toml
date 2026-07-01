@@ -27,3 +27,4 @@ snom-pl-explorer = "app:main"
 
 [tool.setuptools]
 py-modules = ["app", "app_model", "decomposition", "snom_pipeline", "state"]
+packages = ["gui"]
