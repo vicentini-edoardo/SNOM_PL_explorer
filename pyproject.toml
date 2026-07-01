@@ -1,0 +1,29 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "snom-pl-explorer"
+version = "0.1.0"
+description = "Desktop viewer for stroboscopic SNOM photoluminescence scans stored in HDF5 files"
+readme = "README.md"
+requires-python = ">=3.10"
+dependencies = [
+    "h5py",
+    "numpy",
+    "PyQt6",
+    "pyqtgraph",
+    "scikit-learn",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest",
+    "pytest-qt",
+]
+
+[project.scripts]
+snom-pl-explorer = "app:main"
+
+[tool.setuptools]
+py-modules = ["app", "app_model", "decomposition", "snom_pipeline", "state"]

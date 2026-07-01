@@ -2,5 +2,6 @@ h5py
 numpy
 PyQt6
 pyqtgraph
+scikit-learn
 pytest
 pytest-qt
