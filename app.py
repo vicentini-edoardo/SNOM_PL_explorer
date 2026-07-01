@@ -14,6 +14,8 @@ from snom_pipeline import BG_HIGH_HZ, BG_LOW_HZ, HARMONICS
 
 
 ROOT_DIR = Path(__file__).resolve().parent
+CONTROL_LABEL_WIDTH = 92
+CONTROL_FIELD_MIN_WIDTH = 110
 DEMOD_LABELS = {"0w": "0omega (DC)", "1w": "1omega", "2w": "2omega", "3w": "3omega"}
 COLORMAPS = ["viridis", "plasma", "magma", "inferno", "cividis", "hot", "jet", "gray"]
 PHASE_COLORMAP = "CET-C1"
@@ -220,25 +222,26 @@ class InspectorTab(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
         self.roi_plot = pg.PlotWidget(title="ROI trace")
-        self.roi_plot.setMinimumHeight(150)
+        self.roi_plot.setMinimumHeight(90)
         _style_plot_item(self.roi_plot.getPlotItem())
         self.roi_curve = self.roi_plot.plot(pen=pg.mkPen("#1f77b4", width=2))
         self.spectrum_plot = pg.PlotWidget(title="Detector spectrum")
-        self.spectrum_plot.setMinimumHeight(180)
+        self.spectrum_plot.setMinimumHeight(140)
         _style_plot_item(self.spectrum_plot.getPlotItem())
         self.spectrum_plot.addLegend(offset=(8, 8))
         self.spectrum_curve = self.spectrum_plot.plot(name="original", pen=pg.mkPen("#c9d1d9", width=2))
         self.spectrum_bgsub_curve = self.spectrum_plot.plot(name="bg-sub", pen=pg.mkPen("#d62728", width=2, style=QtCore.Qt.PenStyle.DashLine))
         self.baseline_curve = self.spectrum_plot.plot(name="baseline", pen=pg.mkPen("#2ca02c", width=2, style=QtCore.Qt.PenStyle.DotLine))
         self.fft_plot = ImagePlotWidget("FFT", aspect_locked=False)
+        self.fft_plot.setMinimumHeight(220)
         self.fft_plot.plot.setLabel("left", "Frequency (Hz)")
         self.fft_plot.plot.setLabel("bottom", "Detector px")
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
         layout.setSpacing(6)
         layout.addWidget(self.roi_plot, 1)
-        layout.addWidget(self.spectrum_plot, 1)
-        layout.addWidget(self.fft_plot, 2)
+        layout.addWidget(self.spectrum_plot, 2)
+        layout.addWidget(self.fft_plot, 3)
 
     def clear(self) -> None:
         for curve in (self.roi_curve, self.spectrum_curve, self.spectrum_bgsub_curve, self.baseline_curve):
@@ -606,8 +609,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _build_control_panel(self) -> QtWidgets.QWidget:
         panel = QtWidgets.QWidget()
-        panel.setMinimumWidth(230)
-        panel.setMaximumWidth(310)
+        panel.setMinimumWidth(260)
+        panel.setMaximumWidth(340)
         outer = QtWidgets.QVBoxLayout(panel)
         outer.setContentsMargins(6, 6, 6, 6)
         outer.setSpacing(6)
@@ -629,31 +632,31 @@ class MainWindow(QtWidgets.QMainWindow):
         content_layout.setSpacing(6)
 
         source_group, source_form = self._section_form("Source")
-        source_form.addRow("Root", choose_root_btn)
-        source_form.addRow("Folder", self.folder_combo)
-        source_form.addRow("Scan file", self.file_combo)
+        self._add_row(source_form, "Root", choose_root_btn)
+        self._add_row(source_form, "Folder", self.folder_combo)
+        self._add_row(source_form, "Scan file", self.file_combo)
         source_form.addRow(source_row)
-        source_form.addRow("Status", self.status_label)
-        source_form.addRow("Selected", self.selected_label)
+        self._add_row(source_form, "Status", self.status_label)
+        self._add_row(source_form, "Selected", self.selected_label)
 
         demod_group, demod_form = self._section_form("Demodulation")
-        demod_form.addRow("ROI start", self.roi_start_spin)
-        demod_form.addRow("ROI end", self.roi_end_spin)
-        demod_form.addRow("Harmonic", self.harmonic_combo)
-        demod_form.addRow("Compare", self.compare_combo)
-        demod_form.addRow("Target Hz", self.target_freq_spin)
-        demod_form.addRow("Nbr bins", self.neighbor_bins_spin)
+        self._add_row(demod_form, "ROI start", self.roi_start_spin)
+        self._add_row(demod_form, "ROI end", self.roi_end_spin)
+        self._add_row(demod_form, "Harmonic", self.harmonic_combo)
+        self._add_row(demod_form, "Compare", self.compare_combo)
+        self._add_row(demod_form, "Target Hz", self.target_freq_spin)
+        self._add_row(demod_form, "Nbr bins", self.neighbor_bins_spin)
         demod_form.addRow(self.avg3x3_check)
 
         background_group, background_form = self._section_form("Background")
-        background_form.addRow("BG low Hz", self.bg_low_spin)
-        background_form.addRow("BG high Hz", self.bg_high_spin)
-        background_form.addRow("Baseline px", self.baseline_smooth_spin)
-        background_form.addRow("Nbr avg px", self.background_neighbor_spin)
+        self._add_row(background_form, "BG low Hz", self.bg_low_spin)
+        self._add_row(background_form, "BG high Hz", self.bg_high_spin)
+        self._add_row(background_form, "Baseline px", self.baseline_smooth_spin)
+        self._add_row(background_form, "Nbr avg px", self.background_neighbor_spin)
         background_form.addRow(self.fft_bgsub_check)
 
         export_group, export_form = self._section_form("Export")
-        export_form.addRow("Format", self.export_format_combo)
+        self._add_row(export_form, "Format", self.export_format_combo)
         export_form.addRow(self.export_btn)
 
         for group in (source_group, demod_group, background_group, export_group):
@@ -675,10 +678,10 @@ class MainWindow(QtWidgets.QMainWindow):
         form.setSpacing(5)
         form.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
         form.setFieldGrowthPolicy(QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        form.addRow("Row start", self.row_start_spin)
-        form.addRow("Row end", self.row_end_spin)
-        group.setMinimumWidth(180)
-        group.setMaximumWidth(230)
+        self._add_row(form, "Row start", self.row_start_spin)
+        self._add_row(form, "Row end", self.row_end_spin)
+        group.setMinimumWidth(220)
+        group.setMaximumWidth(260)
         return group
 
     def _build_decomposition_controls(self) -> QtWidgets.QGroupBox:
@@ -688,19 +691,26 @@ class MainWindow(QtWidgets.QMainWindow):
         form.setSpacing(5)
         form.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
         form.setFieldGrowthPolicy(QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        form.addRow("Harmonic", self.decomp_harmonic_combo)
-        form.addRow("Method", self.decomp_method_combo)
-        form.addRow("Components", self.decomp_components_spin)
-        form.addRow("Categorizer", self.decomp_categorizer_combo)
-        form.addRow("Clusters", self.decomp_clusters_spin)
-        form.addRow("Det start", self.detector_start_spin)
-        form.addRow("Det end", self.detector_end_spin)
+        self._add_row(form, "Harmonic", self.decomp_harmonic_combo)
+        self._add_row(form, "Method", self.decomp_method_combo)
+        self._add_row(form, "Components", self.decomp_components_spin)
+        self._add_row(form, "Categorizer", self.decomp_categorizer_combo)
+        self._add_row(form, "Clusters", self.decomp_clusters_spin)
+        self._add_row(form, "Det start", self.detector_start_spin)
+        self._add_row(form, "Det end", self.detector_end_spin)
         form.addRow(self.decomp_bgsub_check)
         form.addRow(self.decomp_l2_check)
         form.addRow(self.decomp_standardize_check)
         form.addRow(self.decomp_normalize_spectra_check)
         form.addRow(self.decomp_compute_btn)
         return group
+
+    def _add_row(self, form: QtWidgets.QFormLayout, label_text: str, widget: QtWidgets.QWidget) -> None:
+        label = QtWidgets.QLabel(label_text)
+        label.setMinimumWidth(CONTROL_LABEL_WIDTH)
+        if isinstance(widget, (QtWidgets.QComboBox, QtWidgets.QAbstractSpinBox)):
+            widget.setMinimumWidth(CONTROL_FIELD_MIN_WIDTH)
+        form.addRow(label, widget)
 
     def _section_form(self, title: str) -> tuple[QtWidgets.QGroupBox, QtWidgets.QFormLayout]:
         group = QtWidgets.QGroupBox(title)
