@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import datetime
 import json
+import logging
 import os
 import sys
 from pathlib import Path
@@ -17,6 +18,8 @@ from gui.tabs import DecompositionTab, LineProfileTab, MapsInspectorTab
 from gui.theme import apply_theme
 from gui.workers import Worker
 from snom_pipeline import BG_HIGH_HZ, BG_LOW_HZ, HARMONICS
+
+logger = logging.getLogger(__name__)
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
 CONTROL_LABEL_WIDTH = 92
@@ -88,6 +91,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.decomp_compute_btn = QtWidgets.QPushButton("Compute decomposition")
         self.export_format_combo = QtWidgets.QComboBox()
         self.export_btn = QtWidgets.QPushButton("Export images")
+        self.export_data_btn = QtWidgets.QPushButton("Export data (CSV + NPZ)")
 
         self.tabs = QtWidgets.QTabWidget()
         self.explore_tab = MapsInspectorTab()
@@ -275,6 +279,7 @@ class MainWindow(QtWidgets.QMainWindow):
         export_group, export_form = self._section_form("Export")
         self._add_row(export_form, "Format", self.export_format_combo)
         export_form.addRow(self.export_btn)
+        export_form.addRow(self.export_data_btn)
 
         for group in (source_group, demod_group, background_group, export_group):
             content_layout.addWidget(group)
@@ -376,6 +381,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.decomp_compute_btn.clicked.connect(self.compute_decomposition)
         self.decomp_normalize_spectra_check.toggled.connect(self._redraw_decomposition_spectra)
         self.export_btn.clicked.connect(self.export_images)
+        self.export_data_btn.clicked.connect(self.export_data)
         map_widgets = [
             self.maps_tab.primary_map,
             self.maps_tab.primary_bgsub_map,
@@ -441,7 +447,7 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _set_busy(self, busy: bool, message: str | None = None) -> None:
         self._busy = busy
-        for button in (self.load_btn, self.recompute_btn, self.decomp_compute_btn, self.export_btn):
+        for button in (self.load_btn, self.recompute_btn, self.decomp_compute_btn, self.export_btn, self.export_data_btn):
             button.setEnabled(not busy)
         if busy:
             self.progress_bar.setRange(0, 0)  # indeterminate until first progress report
@@ -470,6 +476,7 @@ class MainWindow(QtWidgets.QMainWindow):
         if not folder or not filename:
             self.status_label.setText("No scan loaded")
             return
+        logger.info("Loading scan %s/%s (recompute=%s)", folder, filename, recompute)
         self._set_busy(True, "Processing...")
         worker = Worker(self.model.load_scan, folder, filename, recompute=recompute, wants_progress=True)
         self._start_worker(worker, self._on_scan_loaded, self._on_scan_failed)
@@ -484,7 +491,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _on_scan_failed(self, exc: Exception) -> None:
         self._set_busy(False)
-        self.status_label.setText(f"Load failed: {exc}")
+        logger.error("Scan load failed", exc_info=exc)
+        self.status_label.setText("Load failed")
+        QtWidgets.QMessageBox.critical(self, "Load failed", str(exc))
 
     def _reset_colorbar_locks(self) -> None:
         for widget in [
@@ -642,7 +651,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _on_decomposition_failed(self, exc: Exception) -> None:
         self._set_busy(False)
-        self.status_label.setText(f"Decomposition failed: {exc}")
+        logger.error("Decomposition failed", exc_info=exc)
+        self.status_label.setText("Decomposition failed")
+        QtWidgets.QMessageBox.critical(self, "Decomposition failed", str(exc))
 
     def _show_decomposition(self, result) -> None:
         self.last_decomposition = result
@@ -747,6 +758,16 @@ class MainWindow(QtWidgets.QMainWindow):
             except Exception as exc:
                 errors.append(f"{name}: {exc}")
 
+        with open(out_dir / "settings.json", "w") as f:
+            json.dump(self._export_metadata(fmt), f, indent=2, sort_keys=True)
+
+        msg = f"Exported {len(plots) - len(errors)}/{len(plots)} images to:\n{out_dir}"
+        if errors:
+            logger.warning("Image export finished with %d failures: %s", len(errors), errors)
+            msg += f"\n\nFailed ({len(errors)}):\n" + "\n".join(errors[:5])
+        QtWidgets.QMessageBox.information(self, "Export complete", msg)
+
+    def _export_metadata(self, fmt: str) -> dict:
         settings = self._current_settings()
         ix, iy = self.model.selected_pixel
         preprocess: list[str] = []
@@ -757,9 +778,9 @@ class MainWindow(QtWidgets.QMainWindow):
         if self.decomp_standardize_check.isChecked():
             preprocess.append("standardize")
 
-        export_metadata = {
+        return {
             "timestamp": datetime.datetime.now().isoformat(),
-            "source_file": str(source_path),
+            "source_file": str(self.model.summary.path),
             "export_format": fmt,
             "settings": {
                 "harmonic": settings.harmonic,
@@ -788,16 +809,102 @@ class MainWindow(QtWidgets.QMainWindow):
             "scan_metadata": self.model.summary.metadata,
         }
 
-        with open(out_dir / "settings.json", "w") as f:
-            json.dump(export_metadata, f, indent=2, sort_keys=True)
+    def export_data(self) -> None:
+        if self.model.summary is None or self.model.bundle is None:
+            QtWidgets.QMessageBox.warning(self, "No scan loaded", "Load a scan before exporting.")
+            return
+        source_path = self.model.summary.path
+        timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+        out_dir = source_path.parent / f"{source_path.stem}_data_{timestamp}"
+        try:
+            files = self._export_data_files(out_dir)
+        except Exception as exc:
+            logger.error("Data export failed", exc_info=exc)
+            QtWidgets.QMessageBox.critical(self, "Export failed", str(exc))
+            return
+        QtWidgets.QMessageBox.information(
+            self, "Export complete", f"Wrote {len(files)} files to:\n{out_dir}"
+        )
 
-        msg = f"Exported {len(plots) - len(errors)}/{len(plots)} images to:\n{out_dir}"
-        if errors:
-            msg += f"\n\nFailed ({len(errors)}):\n" + "\n".join(errors[:5])
-        QtWidgets.QMessageBox.information(self, "Export complete", msg)
+    def _export_data_files(self, out_dir: Path) -> list[Path]:
+        """Write the current maps, inspector curves and line profile as NPZ/CSV."""
+        out_dir = Path(out_dir)
+        out_dir.mkdir(parents=True, exist_ok=True)
+        settings = self._current_settings()
+        files: list[Path] = []
+
+        maps = self.model.compute_maps(settings)
+        arrays = dict(maps)
+        if self.last_decomposition is not None:
+            arrays["category_labels"] = self.last_decomposition.label_map
+        maps_path = out_dir / "maps.npz"
+        np.savez_compressed(maps_path, **arrays)
+        files.append(maps_path)
+
+        inspector = self.model.compute_inspector(settings)
+        roi = np.asarray(inspector["roi_trace"], dtype=np.float64)
+        roi_path = out_dir / "roi_trace.csv"
+        np.savetxt(
+            roi_path,
+            np.column_stack([np.arange(roi.size), roi]),
+            delimiter=",",
+            header="sample,value",
+            comments="",
+        )
+        files.append(roi_path)
+
+        spectrum_path = out_dir / "detector_spectrum.csv"
+        np.savetxt(
+            spectrum_path,
+            np.column_stack(
+                [
+                    inspector["det_axis"],
+                    inspector["spectrum"],
+                    inspector["spectrum_bgsub"],
+                    inspector["baseline"],
+                ]
+            ),
+            delimiter=",",
+            header="detector_px,spectrum,spectrum_bgsub,baseline",
+            comments="",
+        )
+        files.append(spectrum_path)
+
+        profile = self.model.compute_line_profile(
+            settings, (self.row_start_spin.value(), self.row_end_spin.value())
+        )
+        profile_path = out_dir / "line_profile.csv"
+        np.savetxt(
+            profile_path,
+            np.column_stack(
+                [
+                    profile["x"],
+                    profile["primary"],
+                    profile["primary_bgsub"],
+                    profile["compare"],
+                    profile["compare_bgsub"],
+                    profile["m1p"],
+                ]
+            ),
+            delimiter=",",
+            header="x,primary,primary_bgsub,compare,compare_bgsub,m1p",
+            comments="",
+        )
+        files.append(profile_path)
+
+        settings_path = out_dir / "settings.json"
+        with open(settings_path, "w") as f:
+            json.dump(self._export_metadata("DATA"), f, indent=2, sort_keys=True)
+        files.append(settings_path)
+        logger.info("Exported %d data files to %s", len(files), out_dir)
+        return files
 
 
 def main() -> int:
+    logging.basicConfig(
+        level=logging.INFO,
+        format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+    )
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
     pg.setConfigOptions(imageAxisOrder="col-major")
     window = MainWindow()

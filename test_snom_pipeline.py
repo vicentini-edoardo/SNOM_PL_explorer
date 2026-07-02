@@ -4,6 +4,7 @@ import json
 
 import h5py
 import numpy as np
+import pytest
 
 from snom_pipeline import PROCESSING_VERSION, cache_stamp, process_scan
 
@@ -64,3 +65,30 @@ def test_cache_stamp_includes_processing_version(tmp_path):
     path.write_bytes(b"scan")
 
     assert cache_stamp(path).startswith(f"{PROCESSING_VERSION}_")
+
+
+def test_process_scan_rejects_file_without_metadata(tmp_path):
+    path = tmp_path / "empty.h5"
+    with h5py.File(path, "w"):
+        pass
+
+    with pytest.raises(ValueError, match="empty.h5.*missing 'metadata'"):
+        process_scan(path)
+
+
+def test_process_scan_rejects_incomplete_metadata(tmp_path):
+    path = tmp_path / "partial.h5"
+    with h5py.File(path, "w") as h5:
+        h5.attrs["metadata"] = json.dumps({"grid": {"ny": 1, "nx": 1}})
+        h5.create_group("points")
+
+    with pytest.raises(ValueError, match="partial.h5.*missing required keys.*n_block"):
+        process_scan(path)
+
+
+def test_process_scan_rejects_non_hdf5_file(tmp_path):
+    path = tmp_path / "not_a_scan.h5"
+    path.write_bytes(b"plain text, not hdf5")
+
+    with pytest.raises(ValueError, match="not_a_scan.h5.*cannot open as HDF5"):
+        process_scan(path)

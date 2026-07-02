@@ -191,6 +191,42 @@ def test_map_pixel_signal_updates_selection_and_inspector(qtbot, tmp_path):
 
 
 @pytest.mark.usefixtures("qapp")
+def test_data_export_writes_npz_and_csv(qtbot, tmp_path):
+    _write_grid_scan(tmp_path / "mini.h5")
+    window = MainWindow(root_dir=tmp_path)
+    qtbot.addWidget(window)
+    _load_scan_and_wait(window, qtbot)
+
+    out_dir = tmp_path / "export"
+    files = window._export_data_files(out_dir)
+
+    names = {path.name for path in files}
+    assert names == {"maps.npz", "roi_trace.csv", "detector_spectrum.csv", "line_profile.csv", "settings.json"}
+    with np.load(out_dir / "maps.npz") as maps:
+        assert maps["primary"].shape == (window.model.summary.ny, window.model.summary.nx)
+    header = (out_dir / "line_profile.csv").read_text().splitlines()[0]
+    assert header == "x,primary,primary_bgsub,compare,compare_bgsub,m1p"
+
+
+@pytest.mark.usefixtures("qapp")
+def test_hover_crosshair_syncs_across_maps(qtbot, tmp_path):
+    _write_grid_scan(tmp_path / "mini.h5")
+    window = MainWindow(root_dir=tmp_path)
+    qtbot.addWidget(window)
+    _load_scan_and_wait(window, qtbot)
+
+    window.maps_tab.primary_map.pixel_hovered.emit(1.5, 0.5)
+    for widget in window.maps_tab.map_widgets:
+        assert widget.crosshair_v.isVisible()
+        assert widget.crosshair_v.value() == 1.5
+        assert widget.crosshair_h.value() == 0.5
+
+    window.maps_tab.primary_map.pixel_hovered.emit(float("nan"), float("nan"))
+    for widget in window.maps_tab.map_widgets:
+        assert not widget.crosshair_v.isVisible()
+
+
+@pytest.mark.usefixtures("qapp")
 def test_session_settings_roundtrip(qtbot, tmp_path, monkeypatch):
     monkeypatch.delenv("SNOM_PL_NO_SETTINGS", raising=False)
     monkeypatch.setenv("SNOM_PL_SETTINGS_FILE", str(tmp_path / "session.ini"))
