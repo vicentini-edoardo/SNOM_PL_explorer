@@ -9,7 +9,9 @@ It provides:
 - line profiles and point-to-point comparison
 - PCA and MNF decomposition
 - k-means and GMM clustering
-- PNG and SVG export
+- PNG and SVG export, plus numeric CSV/NPZ data export
+- background processing with progress reporting, so the UI stays responsive
+- session persistence (window layout, last scan, processing parameters)
 
 ## Requirements
 
@@ -36,7 +38,9 @@ On Windows, activate with:
 python app.py
 ```
 
-The app starts in the repository folder. Pick a directory containing a supported `.h5` scan file from the source controls. Derived cache files are stored under `_cache/`.
+The app starts in the repository folder (or the last root you used). Pick a directory containing a supported `.h5` scan file from the source controls. Derived cache files are stored under `_cache/`.
+
+Session state is stored via QSettings; set `SNOM_PL_NO_SETTINGS=1` to disable it or `SNOM_PL_SETTINGS_FILE=/path/to/session.ini` to relocate it.
 
 ## Test
 

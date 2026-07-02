@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable
+from typing import Callable, Iterable
 
 import numpy as np
 
@@ -130,21 +130,27 @@ class SnomAppModel:
     def path_from_selection(self, folder: str, filename: str) -> Path:
         return self.root_dir / filename if folder == "." else self.root_dir / folder / filename
 
-    def load_scan(self, folder: str, filename: str, recompute: bool = False) -> ScanSummary:
+    def load_scan(
+        self,
+        folder: str,
+        filename: str,
+        recompute: bool = False,
+        progress_cb: Callable[[float, str], None] | None = None,
+    ) -> ScanSummary:
         path = self.path_from_selection(folder, filename)
         cache_path = self.cache_dir / (path.stem + ".proc.npz")
         stamp = cache_stamp(path)
         status = "Computed and cached"
+        bundle = None
         if cache_path.exists() and not recompute:
             cached = load_cache(cache_path)
             if cached.get("stamp") == stamp:
-                self.bundle = cached
+                bundle = cached
                 status = "Loaded from cache"
-            else:
-                self.bundle = None
-        if self.bundle is None:
-            self.bundle = process_scan(path)
-            save_cache(self.bundle, cache_path, stamp)
+        if bundle is None:
+            bundle = process_scan(path, progress_cb=progress_cb)
+            save_cache(bundle, cache_path, stamp)
+        self.bundle = bundle
 
         grid = self.bundle["grid"]
         metadata = self.bundle["metadata"]

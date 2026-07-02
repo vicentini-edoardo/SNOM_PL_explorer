@@ -2,11 +2,14 @@
 from __future__ import annotations
 
 import json
+import logging
 from pathlib import Path
 from typing import Callable
 
 import h5py
 import numpy as np
+
+logger = logging.getLogger(__name__)
 
 HARMONICS = ("0w", "1w", "2w", "3w")
 SNOM_CHANNELS = ("Z", "M1A", "M1P", "M2A", "M2P")
@@ -173,6 +176,40 @@ def integrate_roi(frames: np.ndarray, ps: int, pe: int, method: str = "mean") ->
 
 # ── Scan I/O ──────────────────────────────────────────────────────────────────
 
+REQUIRED_METADATA_KEYS = (
+    "grid",
+    "n_block",
+    "trigger_frequency_hz",
+    "f_expected_hz",
+    "f_search_halfwidth_hz",
+    "roi_pixel_start",
+    "roi_pixel_end",
+)
+
+
+def validate_scan_file(h5: h5py.File, path: Path) -> dict:
+    """Check *h5* looks like a supported scan and return its parsed metadata.
+
+    Raises ValueError with a message naming the file and the exact problem,
+    so the GUI can show something actionable instead of a KeyError.
+    """
+    if "metadata" not in h5.attrs:
+        raise ValueError(f"{path.name}: not a supported scan file (missing 'metadata' attribute)")
+    try:
+        meta = json.loads(h5.attrs["metadata"])
+    except (json.JSONDecodeError, TypeError) as exc:
+        raise ValueError(f"{path.name}: 'metadata' attribute is not valid JSON ({exc})") from None
+    missing = [key for key in REQUIRED_METADATA_KEYS if key not in meta]
+    if missing:
+        raise ValueError(f"{path.name}: metadata is missing required keys: {', '.join(missing)}")
+    grid = meta["grid"]
+    if not isinstance(grid, dict) or "ny" not in grid or "nx" not in grid:
+        raise ValueError(f"{path.name}: metadata 'grid' must contain 'ny' and 'nx'")
+    if "points" not in h5 or len(h5["points"]) == 0:
+        raise ValueError(f"{path.name}: no 'points' group with scan data")
+    return meta
+
+
 def cache_stamp(path: Path) -> str:
     """Unique string for path's mtime + size; used to detect stale cache."""
     s = path.stat()
@@ -198,8 +235,13 @@ def process_scan(
     fft_zlim, fft_bgsub_zlim      – (lo, hi) floats
     """
     path = Path(path)
-    with h5py.File(path, "r") as h5:
-        meta = json.loads(h5.attrs["metadata"])
+    logger.info("Processing scan %s", path)
+    try:
+        h5_file = h5py.File(path, "r")
+    except OSError as exc:
+        raise ValueError(f"{path.name}: cannot open as HDF5 ({exc})") from None
+    with h5_file as h5:
+        meta = validate_scan_file(h5, path)
         grid = meta["grid"]
         ny, nx = int(grid["ny"]), int(grid["nx"])
         n_block = int(meta["n_block"])

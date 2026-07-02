@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
+os.environ.setdefault("SNOM_PL_NO_SETTINGS", "1")
 
 import pytest
 import numpy as np
@@ -10,6 +11,16 @@ from PyQt6 import QtWidgets
 
 from app import ImagePlotWidget, MainWindow
 from test_app_model import _write_grid_scan
+
+
+def _load_scan_and_wait(window: MainWindow, qtbot, recompute: bool = True) -> None:
+    window.load_selected_scan(recompute=recompute)
+    qtbot.waitUntil(lambda: not window.is_busy and window.model.bundle is not None, timeout=15000)
+
+
+def _compute_decomposition_and_wait(window: MainWindow, qtbot) -> None:
+    window.compute_decomposition()
+    qtbot.waitUntil(lambda: not window.is_busy and window.last_decomposition is not None, timeout=15000)
 
 
 @pytest.mark.usefixtures("qapp")
@@ -41,7 +52,7 @@ def test_loading_scan_initializes_controls_and_plots(qtbot, tmp_path):
     window = MainWindow(root_dir=tmp_path)
     qtbot.addWidget(window)
 
-    window.load_selected_scan(recompute=True)
+    _load_scan_and_wait(window, qtbot)
 
     assert window.model.bundle is not None
     assert window.roi_start_spin.value() == 1
@@ -107,7 +118,7 @@ def test_line_profile_previews_show_source_maps_and_selected_rows(qtbot, tmp_pat
     window = MainWindow(root_dir=tmp_path)
     qtbot.addWidget(window)
 
-    window.load_selected_scan(recompute=True)
+    _load_scan_and_wait(window, qtbot)
     window.row_start_spin.setValue(0)
     window.row_end_spin.setValue(1)
     window.refresh_plots()
@@ -169,7 +180,7 @@ def test_map_pixel_signal_updates_selection_and_inspector(qtbot, tmp_path):
     _write_grid_scan(tmp_path / "mini.h5")
     window = MainWindow(root_dir=tmp_path)
     qtbot.addWidget(window)
-    window.load_selected_scan(recompute=True)
+    _load_scan_and_wait(window, qtbot)
 
     assert window.maps_tab.m1p_map.default_cmap == "CET-C1"
     window.maps_tab.primary_map.pixel_selected.emit(0, 1)
@@ -180,13 +191,71 @@ def test_map_pixel_signal_updates_selection_and_inspector(qtbot, tmp_path):
 
 
 @pytest.mark.usefixtures("qapp")
+def test_data_export_writes_npz_and_csv(qtbot, tmp_path):
+    _write_grid_scan(tmp_path / "mini.h5")
+    window = MainWindow(root_dir=tmp_path)
+    qtbot.addWidget(window)
+    _load_scan_and_wait(window, qtbot)
+
+    out_dir = tmp_path / "export"
+    files = window._export_data_files(out_dir)
+
+    names = {path.name for path in files}
+    assert names == {"maps.npz", "roi_trace.csv", "detector_spectrum.csv", "line_profile.csv", "settings.json"}
+    with np.load(out_dir / "maps.npz") as maps:
+        assert maps["primary"].shape == (window.model.summary.ny, window.model.summary.nx)
+    header = (out_dir / "line_profile.csv").read_text().splitlines()[0]
+    assert header == "x,primary,primary_bgsub,compare,compare_bgsub,m1p"
+
+
+@pytest.mark.usefixtures("qapp")
+def test_hover_crosshair_syncs_across_maps(qtbot, tmp_path):
+    _write_grid_scan(tmp_path / "mini.h5")
+    window = MainWindow(root_dir=tmp_path)
+    qtbot.addWidget(window)
+    _load_scan_and_wait(window, qtbot)
+
+    window.maps_tab.primary_map.pixel_hovered.emit(1.5, 0.5)
+    for widget in window.maps_tab.map_widgets:
+        assert widget.crosshair_v.isVisible()
+        assert widget.crosshair_v.value() == 1.5
+        assert widget.crosshair_h.value() == 0.5
+
+    window.maps_tab.primary_map.pixel_hovered.emit(float("nan"), float("nan"))
+    for widget in window.maps_tab.map_widgets:
+        assert not widget.crosshair_v.isVisible()
+
+
+@pytest.mark.usefixtures("qapp")
+def test_session_settings_roundtrip(qtbot, tmp_path, monkeypatch):
+    monkeypatch.delenv("SNOM_PL_NO_SETTINGS", raising=False)
+    monkeypatch.setenv("SNOM_PL_SETTINGS_FILE", str(tmp_path / "session.ini"))
+
+    window = MainWindow(root_dir=tmp_path)
+    qtbot.addWidget(window)
+    window.bg_low_spin.setValue(12.5)
+    window.harmonic_combo.setCurrentIndex(2)
+    window.avg3x3_check.setChecked(False)
+    window.decomp_clusters_spin.setValue(7)
+    window._save_session()
+
+    restored = MainWindow(root_dir=tmp_path)
+    qtbot.addWidget(restored)
+
+    assert restored.bg_low_spin.value() == 12.5
+    assert restored.harmonic_combo.currentData() == "2w"
+    assert restored.avg3x3_check.isChecked() is False
+    assert restored.decomp_clusters_spin.value() == 7
+
+
+@pytest.mark.usefixtures("qapp")
 def test_decomposition_button_populates_category_plot(qtbot, tmp_path):
     _write_grid_scan(tmp_path / "mini.h5")
     window = MainWindow(root_dir=tmp_path)
     qtbot.addWidget(window)
-    window.load_selected_scan(recompute=True)
+    _load_scan_and_wait(window, qtbot)
 
-    window.compute_decomposition()
+    _compute_decomposition_and_wait(window, qtbot)
 
     assert window.last_decomposition is not None
     assert window.decomposition_tab.category_map.image is not None
