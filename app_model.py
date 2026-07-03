@@ -325,6 +325,53 @@ class SnomAppModel:
             "diff": max_spec - min_spec,
         }
 
+    def compute_period_trace(self, settings: MapSettings) -> dict[str, np.ndarray]:
+        """ROI-averaged raw time trace at the selected pixel, with the frame
+        indices used as max/min samples flagged for highlighting."""
+        bundle = self._require_bundle()
+        summary = self.summary
+        if summary is None:
+            raise RuntimeError("No scan loaded")
+        meta = bundle["metadata"]
+        fs = float(meta["trigger_frequency_hz"])
+        f0 = settings.target_frequency_hz or float(meta.get("f_expected_hz", 4.0))
+        window = max(0, int(settings.period_window))
+        period_len = max(2, round(fs / f0))
+        ps, pe = settings.roi_range
+        ix, iy = self.selected_pixel
+        det = len(bundle["det_axis"])
+
+        frames = None
+        with h5py.File(summary.path, "r") as h5:
+            for name in h5["points"]:
+                grp = h5[f"points/{name}"]
+                if int(grp.attrs["iy"]) == iy and int(grp.attrs["ix"]) == ix:
+                    frames = np.asarray(grp["frames"], dtype=np.float64)
+                    break
+
+        empty = np.zeros(0, dtype=np.float64)
+        if frames is None or frames.ndim != 2 or frames.shape[1] != det:
+            return {"x": empty, "trace": empty, "max_mask": empty.astype(bool), "min_mask": empty.astype(bool)}
+
+        n = frames.shape[0]
+        trace = frames[:, ps : pe + 1].mean(axis=1)
+        max_mask = np.zeros(n, dtype=bool)
+        min_mask = np.zeros(n, dtype=bool)
+        n_periods = n // period_len
+        if n_periods >= 1:
+            trimmed = frames[: n_periods * period_len]
+            ref = trimmed.reshape(n_periods, period_len, det).mean(axis=0).mean(axis=1)
+            p_max, p_min = int(np.argmax(ref)), int(np.argmin(ref))
+            offsets = np.arange(-window, window + 1)
+            idx_max = (p_max + offsets) % period_len
+            idx_min = (p_min + offsets) % period_len
+            for p in range(n_periods):
+                base = p * period_len
+                max_mask[base + idx_max] = True
+                min_mask[base + idx_min] = True
+
+        return {"x": np.arange(n, dtype=np.float64), "trace": trace, "max_mask": max_mask, "min_mask": min_mask}
+
     def compute_decomposition(
         self,
         *,

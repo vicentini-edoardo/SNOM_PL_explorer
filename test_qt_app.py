@@ -142,6 +142,7 @@ def test_period_tab_populates_maps_and_spectra(qtbot, tmp_path):
     assert window.period_tab.min_map.image is not None
     assert window.period_tab.diff_map.image is not None
     assert window.period_tab.max_curve.xData is not None
+    assert window.period_tab.trace_curve.xData is not None
 
 
 @pytest.mark.usefixtures("qapp")

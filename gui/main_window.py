@@ -663,6 +663,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.period_tab.min_curve.setData(det_axis, spectra["min"])
         self.period_tab.diff_curve.setData(det_axis, spectra["diff"])
 
+        trace = self.model.compute_period_trace(settings)
+        self.period_tab.trace_curve.setData(trace["x"], trace["trace"])
+        self.period_tab.trace_max_scatter.setData(trace["x"][trace["max_mask"]], trace["trace"][trace["max_mask"]])
+        self.period_tab.trace_min_scatter.setData(trace["x"][trace["min_mask"]], trace["trace"][trace["min_mask"]])
+
     def set_selected_pixel(self, ix: int, iy: int) -> None:
         self.model.select_pixel(ix, iy)
         self.refresh_plots()

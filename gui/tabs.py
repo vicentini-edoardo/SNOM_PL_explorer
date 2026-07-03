@@ -226,6 +226,16 @@ class PeriodTab(QtWidgets.QWidget):
         spectrum_item.legend.addItem(self.diff_curve, "max-min")
         spectrum_item.getAxis("right").setLabel("max-min")
 
+        self.trace_plot = pg.PlotWidget(title="ROI trace at cursor")
+        trace_item = self.trace_plot.getPlotItem()
+        style_plot_item(trace_item)
+        self.trace_plot.setMaximumHeight(160)
+        self.trace_curve = self.trace_plot.plot(pen=pg.mkPen("#c9d1d9", width=1))
+        self.trace_max_scatter = pg.ScatterPlotItem(size=7, brush=pg.mkBrush("#d62728"), pen=None)
+        self.trace_min_scatter = pg.ScatterPlotItem(size=7, brush=pg.mkBrush("#1f77b4"), pen=None)
+        trace_item.addItem(self.trace_max_scatter)
+        trace_item.addItem(self.trace_min_scatter)
+
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
@@ -251,3 +261,4 @@ class PeriodTab(QtWidgets.QWidget):
         plots.setColumnStretch(1, 1)
         body.addLayout(plots, 1)
         layout.addLayout(body, 1)
+        layout.addWidget(self.trace_plot)

@@ -120,6 +120,22 @@ def test_model_computes_period_max_min_maps_and_spectra(tmp_path):
     assert np.allclose(spectra["diff"], spectra["max"] - spectra["min"])
 
 
+def test_model_computes_period_trace_with_max_min_highlight(tmp_path):
+    _write_grid_scan(tmp_path / "mini.h5")
+    model = SnomAppModel(tmp_path)
+    model.load_scan(".", "mini.h5", recompute=True)
+    model.select_pixel(0, 1)
+
+    settings = model.map_settings()
+    trace = model.compute_period_trace(settings)
+
+    assert trace["x"].shape == (40,)
+    assert trace["trace"].shape == (40,)
+    assert trace["max_mask"].sum() > 0
+    assert trace["min_mask"].sum() > 0
+    assert not np.any(trace["max_mask"] & trace["min_mask"])
+
+
 def test_model_period_max_min_skips_interrupted_pixel(tmp_path):
     scan_path = tmp_path / "mini.h5"
     _write_grid_scan(scan_path)
