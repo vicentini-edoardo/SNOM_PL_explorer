@@ -65,6 +65,7 @@ class MapSettings:
     neighbor_bins: int = 0
     avg3x3: bool = True
     fft_bgsub: bool = False
+    mechanical_channel: str = "M1P"
 
 
 @dataclass(frozen=True)
@@ -207,6 +208,7 @@ class SnomAppModel:
             "compare_bgsub": compare_bgsub,
             "m1a": snom_maps.get("M1A", np.full_like(primary, np.nan)),
             "m1p": snom_maps.get("M1P", np.full_like(primary, np.nan)),
+            "mechanical": snom_maps.get(settings.mechanical_channel, np.full_like(primary, np.nan)),
         }
 
     def compute_inspector(self, settings: MapSettings) -> dict[str, np.ndarray]:
@@ -236,16 +238,13 @@ class SnomAppModel:
         ny = int(bundle["grid"]["ny"])
         row_lo, row_hi = _normal_range(rows[0], rows[1], ny - 1)
         maps = self.compute_maps(settings)
-        phase = bundle.get("snom_maps", {}).get("M1P")
-        if phase is None:
-            phase = np.full_like(maps["primary"], np.nan)
         return {
             "x": np.arange(maps["primary"].shape[1], dtype=np.float64),
             "primary": nanmean_or_nan(maps["primary"][row_lo : row_hi + 1, :], axis=0),
             "primary_bgsub": nanmean_or_nan(maps["primary_bgsub"][row_lo : row_hi + 1, :], axis=0),
             "compare": nanmean_or_nan(maps["compare"][row_lo : row_hi + 1, :], axis=0),
             "compare_bgsub": nanmean_or_nan(maps["compare_bgsub"][row_lo : row_hi + 1, :], axis=0),
-            "m1p": nanmean_or_nan(phase[row_lo : row_hi + 1, :], axis=0),
+            "mechanical": nanmean_or_nan(maps["mechanical"][row_lo : row_hi + 1, :], axis=0),
         }
 
     def compute_decomposition(

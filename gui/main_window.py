@@ -17,7 +17,7 @@ from gui.plotting import CAT_PALETTE, ImagePlotWidget
 from gui.tabs import DecompositionTab, LineProfileTab, MapsInspectorTab
 from gui.theme import apply_theme
 from gui.workers import Worker
-from snom_pipeline import BG_HIGH_HZ, BG_LOW_HZ, HARMONICS
+from snom_pipeline import BG_HIGH_HZ, BG_LOW_HZ, HARMONICS, SNOM_CHANNELS
 
 logger = logging.getLogger(__name__)
 
@@ -69,6 +69,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.detector_end_spin = QtWidgets.QSpinBox()
         self.row_start_spin = QtWidgets.QSpinBox()
         self.row_end_spin = QtWidgets.QSpinBox()
+        self.mechanical_combo = QtWidgets.QComboBox()
         self.harmonic_combo = QtWidgets.QComboBox()
         self.compare_combo = QtWidgets.QComboBox()
         self.target_freq_spin = QtWidgets.QDoubleSpinBox()
@@ -302,6 +303,7 @@ class MainWindow(QtWidgets.QMainWindow):
         form.setFieldGrowthPolicy(QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self._add_row(form, "Row start", self.row_start_spin)
         self._add_row(form, "Row end", self.row_end_spin)
+        self._add_row(form, "Signal", self.mechanical_combo)
         group.setMinimumWidth(220)
         group.setMaximumWidth(260)
         return group
@@ -350,6 +352,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 combo.addItem(DEMOD_LABELS[harmonic], harmonic)
         self.compare_combo.setCurrentIndex(1)
         self.decomp_harmonic_combo.setCurrentIndex(1)
+        self.mechanical_combo.addItems(list(SNOM_CHANNELS))
+        self.mechanical_combo.setCurrentText("M1P")
         self.decomp_method_combo.addItems(["PCA", "MNF"])
         self.decomp_categorizer_combo.addItems(["kmeans", "gmm"])
         for spin in (self.roi_start_spin, self.roi_end_spin, self.detector_start_spin, self.detector_end_spin):
@@ -401,6 +405,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.roi_end_spin,
             self.row_start_spin,
             self.row_end_spin,
+            self.mechanical_combo,
             self.harmonic_combo,
             self.compare_combo,
             self.target_freq_spin,
@@ -545,6 +550,7 @@ class MainWindow(QtWidgets.QMainWindow):
             neighbor_bins=self.neighbor_bins_spin.value(),
             avg3x3=self.avg3x3_check.isChecked(),
             fft_bgsub=self.fft_bgsub_check.isChecked(),
+            mechanical_channel=self.mechanical_combo.currentText() or "M1P",
         )
 
     def refresh_plots(self) -> None:
@@ -599,7 +605,9 @@ class MainWindow(QtWidgets.QMainWindow):
             cmap=settings.cmap,
             selected=selected,
         )
-        self.line_profile_tab.mechanical_preview.set_image(maps["m1p"], "Mechanical M1P", selected=selected)
+        self.line_profile_tab.mechanical_preview.set_image(
+            maps["mechanical"], f"Mechanical {settings.mechanical_channel}", selected=selected
+        )
         for preview in (
             self.line_profile_tab.primary_preview,
             self.line_profile_tab.compare_preview,
@@ -612,7 +620,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self.line_profile_tab.primary_bg_curve.setData(x, profile["primary_bgsub"])
         self.line_profile_tab.compare_curve.setData(x, profile["compare"])
         self.line_profile_tab.compare_bg_curve.setData(x, profile["compare_bgsub"])
-        self.line_profile_tab.phase_curve.setData(x, profile["m1p"])
+        self.line_profile_tab.mechanical_curve.setData(x, profile["mechanical"])
+        plot_item = self.line_profile_tab.plot.getPlotItem()
+        legend = plot_item.legend
+        legend.removeItem(self.line_profile_tab.mechanical_curve)
+        legend.addItem(self.line_profile_tab.mechanical_curve, settings.mechanical_channel)
+        plot_item.getAxis("right").setLabel(settings.mechanical_channel)
 
     def set_selected_pixel(self, ix: int, iy: int) -> None:
         self.model.select_pixel(ix, iy)
@@ -883,11 +896,11 @@ class MainWindow(QtWidgets.QMainWindow):
                     profile["primary_bgsub"],
                     profile["compare"],
                     profile["compare_bgsub"],
-                    profile["m1p"],
+                    profile["mechanical"],
                 ]
             ),
             delimiter=",",
-            header="x,primary,primary_bgsub,compare,compare_bgsub,m1p",
+            header=f"x,primary,primary_bgsub,compare,compare_bgsub,{settings.mechanical_channel}",
             comments="",
         )
         files.append(profile_path)

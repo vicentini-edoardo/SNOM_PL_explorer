@@ -93,7 +93,7 @@ def test_model_computes_dash_equivalent_maps_and_inspector_data(tmp_path):
     inspector = model.compute_inspector(settings)
     profile = model.compute_line_profile(settings, rows=(0, 1))
 
-    assert set(maps) == {"primary", "primary_bgsub", "compare", "compare_bgsub", "m1a", "m1p"}
+    assert set(maps) == {"primary", "primary_bgsub", "compare", "compare_bgsub", "m1a", "m1p", "mechanical"}
     assert maps["primary"].shape == (2, 2)
     assert inspector["roi_trace"].shape == (40,)
     assert inspector["spectrum"].shape == (4,)

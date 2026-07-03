@@ -205,7 +205,7 @@ def test_data_export_writes_npz_and_csv(qtbot, tmp_path):
     with np.load(out_dir / "maps.npz") as maps:
         assert maps["primary"].shape == (window.model.summary.ny, window.model.summary.nx)
     header = (out_dir / "line_profile.csv").read_text().splitlines()[0]
-    assert header == "x,primary,primary_bgsub,compare,compare_bgsub,m1p"
+    assert header == "x,primary,primary_bgsub,compare,compare_bgsub,M1P"
 
 
 @pytest.mark.usefixtures("qapp")

@@ -106,13 +106,32 @@ class LineProfileTab(QtWidgets.QWidget):
             preview.setMaximumHeight(200)
         self.plot = pg.PlotWidget(title="Line profile")
         self.plot.setMinimumHeight(240)
-        style_plot_item(self.plot.getPlotItem())
+        plot_item = self.plot.getPlotItem()
+        style_plot_item(plot_item)
         self.plot.addLegend(offset=(8, 8))
         self.primary_curve = self.plot.plot(name="primary", pen=pg.mkPen("#c9d1d9", width=2))
         self.primary_bg_curve = self.plot.plot(name="primary bg-sub", pen=pg.mkPen("#d62728", width=2))
         self.compare_curve = self.plot.plot(name="compare", pen=pg.mkPen("#1f77b4", width=2))
         self.compare_bg_curve = self.plot.plot(name="compare bg-sub", pen=pg.mkPen("#ff7f0e", width=2))
-        self.phase_curve = self.plot.plot(name="M1P", pen=pg.mkPen("#9467bd", width=2))
+
+        # Mechanical (neaSNOM) signal gets its own Y axis: units/scale differ
+        # wildly from the optical curves above, so a shared axis flattens it.
+        plot_item.showAxis("right")
+        self.mechanical_viewbox = pg.ViewBox()
+        plot_item.scene().addItem(self.mechanical_viewbox)
+        plot_item.getAxis("right").linkToView(self.mechanical_viewbox)
+        self.mechanical_viewbox.setXLink(plot_item)
+        self.mechanical_viewbox.enableAutoRange(axis=pg.ViewBox.YAxis)
+
+        def _sync_mechanical_viewbox() -> None:
+            self.mechanical_viewbox.setGeometry(plot_item.vb.sceneBoundingRect())
+
+        plot_item.vb.sigResized.connect(_sync_mechanical_viewbox)
+        _sync_mechanical_viewbox()
+        self.mechanical_curve = pg.PlotDataItem(pen=pg.mkPen("#9467bd", width=2))
+        self.mechanical_viewbox.addItem(self.mechanical_curve)
+        plot_item.legend.addItem(self.mechanical_curve, "M1P")
+
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
         layout.setSpacing(6)
