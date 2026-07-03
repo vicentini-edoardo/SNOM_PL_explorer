@@ -290,6 +290,8 @@ class SnomAppModel:
                     frames = np.asarray(grp["frames"], dtype=np.float64)
                     if frames.ndim != 2 or frames.shape[1] != det:
                         continue
+                    if frames.shape[0] < n_periods * period_len:
+                        continue  # interrupted measurement, too few frames: leave NaN
                     trimmed = frames[: n_periods * period_len]
                     period_avg = trimmed.reshape(n_periods, period_len, det).mean(axis=0)
                     ref = period_avg.mean(axis=1)

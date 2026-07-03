@@ -120,6 +120,25 @@ def test_model_computes_period_max_min_maps_and_spectra(tmp_path):
     assert np.allclose(spectra["diff"], spectra["max"] - spectra["min"])
 
 
+def test_model_period_max_min_skips_interrupted_pixel(tmp_path):
+    scan_path = tmp_path / "mini.h5"
+    _write_grid_scan(scan_path)
+    with h5py.File(scan_path, "a") as h5:
+        grp = h5["points/point_000_001"]
+        short_frames = grp["frames"][:5]
+        del grp["frames"]
+        grp.create_dataset("frames", data=short_frames)
+
+    model = SnomAppModel(tmp_path)
+    model.load_scan(".", "mini.h5", recompute=True)
+
+    settings = model.map_settings()
+    maps = model.compute_period_maps(settings)
+
+    assert np.isnan(maps["max"][0, 1])
+    assert not np.isnan(maps["max"][0, 0])
+
+
 def test_model_computes_decomposition_summary(tmp_path):
     _write_grid_scan(tmp_path / "mini.h5")
     model = SnomAppModel(tmp_path)
