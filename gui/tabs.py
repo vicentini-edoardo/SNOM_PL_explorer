@@ -191,3 +191,63 @@ class DecompositionTab(QtWidgets.QWidget):
         plots.setColumnStretch(1, 1)
         body.addLayout(plots, 1)
         layout.addLayout(body, 1)
+
+
+class PeriodTab(QtWidgets.QWidget):
+    def __init__(self, controls_group: QtWidgets.QGroupBox):
+        super().__init__()
+        self.controls_group = controls_group
+        self.max_map = ImagePlotWidget("Period max")
+        self.min_map = ImagePlotWidget("Period min")
+        self.diff_map = ImagePlotWidget("Period max-min")
+        self.spectrum_plot = pg.PlotWidget(title="Spectrum at cursor")
+        spectrum_item = self.spectrum_plot.getPlotItem()
+        style_plot_item(spectrum_item)
+        self.spectrum_plot.addLegend(offset=(8, 8))
+        self.max_curve = self.spectrum_plot.plot(name="max", pen=pg.mkPen("#d62728", width=2))
+        self.min_curve = self.spectrum_plot.plot(name="min", pen=pg.mkPen("#1f77b4", width=2))
+
+        # max-min diff gets its own Y axis: its scale can differ a lot from
+        # the raw max/min curves, so a shared axis flattens it.
+        spectrum_item.showAxis("right")
+        self.diff_viewbox = pg.ViewBox()
+        spectrum_item.scene().addItem(self.diff_viewbox)
+        spectrum_item.getAxis("right").linkToView(self.diff_viewbox)
+        self.diff_viewbox.setXLink(spectrum_item)
+        self.diff_viewbox.enableAutoRange(axis=pg.ViewBox.YAxis)
+
+        def _sync_diff_viewbox() -> None:
+            self.diff_viewbox.setGeometry(spectrum_item.vb.sceneBoundingRect())
+
+        spectrum_item.vb.sigResized.connect(_sync_diff_viewbox)
+        _sync_diff_viewbox()
+        self.diff_curve = pg.PlotDataItem(pen=pg.mkPen("#c9d1d9", width=2))
+        self.diff_viewbox.addItem(self.diff_curve)
+        spectrum_item.legend.addItem(self.diff_curve, "max-min")
+        spectrum_item.getAxis("right").setLabel("max-min")
+
+        layout = QtWidgets.QVBoxLayout(self)
+        layout.setContentsMargins(8, 8, 8, 8)
+        layout.setSpacing(6)
+        body = QtWidgets.QHBoxLayout()
+        body.setSpacing(8)
+        ctrl_col = QtWidgets.QWidget()
+        ctrl_col.setFixedWidth(250)
+        ctrl_vbox = QtWidgets.QVBoxLayout(ctrl_col)
+        ctrl_vbox.setContentsMargins(0, 0, 0, 0)
+        ctrl_vbox.setSpacing(0)
+        ctrl_vbox.addWidget(self.controls_group)
+        ctrl_vbox.addStretch(1)
+        body.addWidget(ctrl_col)
+        plots = QtWidgets.QGridLayout()
+        plots.setSpacing(6)
+        plots.addWidget(self.max_map, 0, 0)
+        plots.addWidget(self.min_map, 0, 1)
+        plots.addWidget(self.diff_map, 1, 0)
+        plots.addWidget(self.spectrum_plot, 1, 1)
+        plots.setRowStretch(0, 1)
+        plots.setRowStretch(1, 1)
+        plots.setColumnStretch(0, 1)
+        plots.setColumnStretch(1, 1)
+        body.addLayout(plots, 1)
+        layout.addLayout(body, 1)

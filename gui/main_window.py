@@ -14,7 +14,7 @@ from PyQt6 import QtCore, QtGui, QtWidgets
 
 from app_model import MapSettings, SnomAppModel
 from gui.plotting import CAT_PALETTE, ImagePlotWidget
-from gui.tabs import DecompositionTab, LineProfileTab, MapsInspectorTab
+from gui.tabs import DecompositionTab, LineProfileTab, MapsInspectorTab, PeriodTab
 from gui.theme import apply_theme
 from gui.workers import Worker
 from snom_pipeline import BG_HIGH_HZ, BG_LOW_HZ, HARMONICS, SNOM_CHANNELS
@@ -70,6 +70,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.row_start_spin = QtWidgets.QSpinBox()
         self.row_end_spin = QtWidgets.QSpinBox()
         self.mechanical_combo = QtWidgets.QComboBox()
+        self.period_window_spin = QtWidgets.QSpinBox()
         self.harmonic_combo = QtWidgets.QComboBox()
         self.compare_combo = QtWidgets.QComboBox()
         self.target_freq_spin = QtWidgets.QDoubleSpinBox()
@@ -100,11 +101,13 @@ class MainWindow(QtWidgets.QMainWindow):
         self.inspector_tab = self.explore_tab.inspector
         self.line_profile_tab = LineProfileTab(self._build_line_profile_controls())
         self.decomposition_tab = DecompositionTab(self._build_decomposition_controls())
+        self.period_tab = PeriodTab(self._build_period_controls())
         self.metadata_text = QtWidgets.QPlainTextEdit()
         self.metadata_text.setReadOnly(True)
         self.tabs.addTab(self.explore_tab, "Maps + Inspector")
         self.tabs.addTab(self.line_profile_tab, "Line Profile")
         self.tabs.addTab(self.decomposition_tab, "Decomposition")
+        self.tabs.addTab(self.period_tab, "Period Max/Min")
         self.tabs.addTab(self.metadata_text, "Metadata")
 
         self.main_splitter = QtWidgets.QSplitter()
@@ -200,6 +203,7 @@ class MainWindow(QtWidgets.QMainWindow):
             ("params/background_neighbor_px", self.background_neighbor_spin),
             ("decomp/components", self.decomp_components_spin),
             ("decomp/clusters", self.decomp_clusters_spin),
+            ("period/window", self.period_window_spin),
         ]
 
     def _persisted_checks(self) -> list[tuple[str, QtWidgets.QCheckBox]]:
@@ -329,6 +333,18 @@ class MainWindow(QtWidgets.QMainWindow):
         form.addRow(self.decomp_compute_btn)
         return group
 
+    def _build_period_controls(self) -> QtWidgets.QGroupBox:
+        group = QtWidgets.QGroupBox("Period max/min")
+        form = QtWidgets.QFormLayout(group)
+        form.setContentsMargins(8, 8, 8, 6)
+        form.setSpacing(5)
+        form.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
+        form.setFieldGrowthPolicy(QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        self._add_row(form, "Peak window ±", self.period_window_spin)
+        group.setMinimumWidth(220)
+        group.setMaximumWidth(260)
+        return group
+
     def _add_row(self, form: QtWidgets.QFormLayout, label_text: str, widget: QtWidgets.QWidget) -> None:
         label = QtWidgets.QLabel(label_text)
         label.setMinimumWidth(CONTROL_LABEL_WIDTH)
@@ -362,6 +378,8 @@ class MainWindow(QtWidgets.QMainWindow):
             spin.setRange(0, 999_999)
         for spin in (self.neighbor_bins_spin,):
             spin.setRange(0, 100)
+        self.period_window_spin.setRange(0, 20)
+        self.period_window_spin.setValue(1)
         self.decomp_components_spin.setRange(2, 256)
         self.decomp_components_spin.setValue(5)
         self.decomp_clusters_spin.setRange(2, 128)
@@ -397,6 +415,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.line_profile_tab.compare_preview,
             self.line_profile_tab.mechanical_preview,
             self.decomposition_tab.category_map,
+            self.period_tab.max_map,
+            self.period_tab.min_map,
+            self.period_tab.diff_map,
         ]
         for widget in map_widgets:
             widget.pixel_selected.connect(self.set_selected_pixel)
@@ -416,6 +437,7 @@ class MainWindow(QtWidgets.QMainWindow):
             self.background_neighbor_spin,
             self.avg3x3_check,
             self.fft_bgsub_check,
+            self.period_window_spin,
         ]:
             if hasattr(widget, "valueChanged"):
                 widget.valueChanged.connect(self.refresh_plots)
@@ -551,6 +573,7 @@ class MainWindow(QtWidgets.QMainWindow):
             avg3x3=self.avg3x3_check.isChecked(),
             fft_bgsub=self.fft_bgsub_check.isChecked(),
             mechanical_channel=self.mechanical_combo.currentText() or "M1P",
+            period_window=self.period_window_spin.value(),
         )
 
     def refresh_plots(self) -> None:
@@ -567,6 +590,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.maps_tab.m1p_map.set_image(maps["m1p"], "M1P", selected=selected)
         self.refresh_inspector(settings)
         self.refresh_line_profile(settings, maps)
+        self.refresh_period(settings)
 
     def refresh_inspector(self, settings: MapSettings) -> None:
         data = self.model.compute_inspector(settings)
@@ -626,6 +650,18 @@ class MainWindow(QtWidgets.QMainWindow):
         legend.removeItem(self.line_profile_tab.mechanical_curve)
         legend.addItem(self.line_profile_tab.mechanical_curve, settings.mechanical_channel)
         plot_item.getAxis("right").setLabel(settings.mechanical_channel)
+
+    def refresh_period(self, settings: MapSettings) -> None:
+        maps = self.model.compute_period_maps(settings)
+        selected = self.model.selected_pixel
+        self.period_tab.max_map.set_image(maps["max"], "Period max", selected=selected)
+        self.period_tab.min_map.set_image(maps["min"], "Period min", selected=selected)
+        self.period_tab.diff_map.set_image(maps["diff"], "Period max-min", selected=selected)
+        spectra = self.model.compute_period_spectra(settings)
+        det_axis = spectra["det_axis"]
+        self.period_tab.max_curve.setData(det_axis, spectra["max"])
+        self.period_tab.min_curve.setData(det_axis, spectra["min"])
+        self.period_tab.diff_curve.setData(det_axis, spectra["diff"])
 
     def set_selected_pixel(self, ix: int, iy: int) -> None:
         self.model.select_pixel(ix, iy)

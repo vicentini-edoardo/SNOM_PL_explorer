@@ -102,6 +102,24 @@ def test_model_computes_dash_equivalent_maps_and_inspector_data(tmp_path):
     assert profile["primary"].shape == (2,)
 
 
+def test_model_computes_period_max_min_maps_and_spectra(tmp_path):
+    _write_grid_scan(tmp_path / "mini.h5")
+    model = SnomAppModel(tmp_path)
+    model.load_scan(".", "mini.h5", recompute=True)
+    model.select_pixel(0, 1)
+
+    settings = model.map_settings()
+    maps = model.compute_period_maps(settings)
+    spectra = model.compute_period_spectra(settings)
+
+    assert set(maps) == {"max", "min", "diff"}
+    for m in maps.values():
+        assert m.shape == (2, 2)
+    assert np.allclose(maps["diff"], maps["max"] - maps["min"], equal_nan=True)
+    assert spectra["max"].shape == (4,)
+    assert np.allclose(spectra["diff"], spectra["max"] - spectra["min"])
+
+
 def test_model_computes_decomposition_summary(tmp_path):
     _write_grid_scan(tmp_path / "mini.h5")
     model = SnomAppModel(tmp_path)

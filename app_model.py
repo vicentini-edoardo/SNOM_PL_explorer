@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable
 
+import h5py
 import numpy as np
 
 from decomposition import (
@@ -66,6 +67,7 @@ class MapSettings:
     avg3x3: bool = True
     fft_bgsub: bool = False
     mechanical_channel: str = "M1P"
+    period_window: int = 1
 
 
 @dataclass(frozen=True)
@@ -108,6 +110,7 @@ class SnomAppModel:
         self.line_rows: tuple[int, int] = (0, 0)
         self.target_frequency_hz: float = 4.0
         self._folders: dict[str, list[Path]] = {}
+        self._period_cache: tuple | None = None
         self.refresh_files()
 
     def set_root_dir(self, root_dir: Path) -> None:
@@ -152,6 +155,7 @@ class SnomAppModel:
             bundle = process_scan(path, progress_cb=progress_cb)
             save_cache(bundle, cache_path, stamp)
         self.bundle = bundle
+        self._period_cache = None
 
         grid = self.bundle["grid"]
         metadata = self.bundle["metadata"]
@@ -245,6 +249,78 @@ class SnomAppModel:
             "compare": nanmean_or_nan(maps["compare"][row_lo : row_hi + 1, :], axis=0),
             "compare_bgsub": nanmean_or_nan(maps["compare_bgsub"][row_lo : row_hi + 1, :], axis=0),
             "mechanical": nanmean_or_nan(maps["mechanical"][row_lo : row_hi + 1, :], axis=0),
+        }
+
+    def _period_cubes(self, settings: MapSettings) -> dict[str, np.ndarray]:
+        """Per-detector-pixel average max/min over the modulation period.
+
+        Re-streams raw `frames` from disk (not cached in the bundle) and is
+        memoized on (path, n_block, frequency, window) so repeated calls with
+        unchanged settings are free.
+        # ponytail: extra full frame pass, memoized per-key. If this map gets
+        # used constantly / scans get huge, fold into process_scan + cache.
+        """
+        bundle = self._require_bundle()
+        summary = self.summary
+        if summary is None:
+            raise RuntimeError("No scan loaded")
+        meta = bundle["metadata"]
+        n_block = int(meta["n_block"])
+        fs = float(meta["trigger_frequency_hz"])
+        f0 = settings.target_frequency_hz or float(meta.get("f_expected_hz", 4.0))
+        window = max(0, int(settings.period_window))
+        key = (str(summary.path), n_block, round(float(f0), 6), window)
+        if self._period_cache is not None and self._period_cache[0] == key:
+            return self._period_cache[1]
+
+        grid = bundle["grid"]
+        ny, nx = int(grid["ny"]), int(grid["nx"])
+        det = len(bundle["det_axis"])
+        max_cube = np.full((ny, nx, det), np.nan, dtype=np.float32)
+        min_cube = np.full((ny, nx, det), np.nan, dtype=np.float32)
+
+        period_len = max(2, round(fs / f0))
+        n_periods = n_block // period_len
+        if n_periods >= 1:
+            with h5py.File(summary.path, "r") as h5:
+                for name in h5["points"]:
+                    grp = h5[f"points/{name}"]
+                    iy = int(grp.attrs["iy"])
+                    ix = int(grp.attrs["ix"])
+                    frames = np.asarray(grp["frames"], dtype=np.float64)
+                    if frames.ndim != 2 or frames.shape[1] != det:
+                        continue
+                    trimmed = frames[: n_periods * period_len]
+                    period_avg = trimmed.reshape(n_periods, period_len, det).mean(axis=0)
+                    ref = period_avg.mean(axis=1)
+                    p_max, p_min = int(np.argmax(ref)), int(np.argmin(ref))
+                    offsets = np.arange(-window, window + 1)
+                    idx_max = (p_max + offsets) % period_len
+                    idx_min = (p_min + offsets) % period_len
+                    max_cube[iy, ix] = period_avg[idx_max].mean(axis=0)
+                    min_cube[iy, ix] = period_avg[idx_min].mean(axis=0)
+
+        cubes = {"max": max_cube, "min": min_cube, "det_axis": bundle["det_axis"]}
+        self._period_cache = (key, cubes)
+        return cubes
+
+    def compute_period_maps(self, settings: MapSettings) -> dict[str, np.ndarray]:
+        cubes = self._period_cubes(settings)
+        ps, pe = settings.roi_range
+        max_map = nanmean_or_nan(cubes["max"][:, :, ps : pe + 1], axis=2)
+        min_map = nanmean_or_nan(cubes["min"][:, :, ps : pe + 1], axis=2)
+        return {"max": max_map, "min": min_map, "diff": max_map - min_map}
+
+    def compute_period_spectra(self, settings: MapSettings) -> dict[str, np.ndarray]:
+        cubes = self._period_cubes(settings)
+        ix, iy = self.selected_pixel
+        max_spec = cubes["max"][iy, ix]
+        min_spec = cubes["min"][iy, ix]
+        return {
+            "det_axis": cubes["det_axis"],
+            "max": max_spec,
+            "min": min_spec,
+            "diff": max_spec - min_spec,
         }
 
     def compute_decomposition(

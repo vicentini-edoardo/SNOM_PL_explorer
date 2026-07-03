@@ -29,7 +29,7 @@ def test_main_window_launches_without_scan(qtbot, tmp_path):
     qtbot.addWidget(window)
 
     assert window.windowTitle() == "SNOM Explorer"
-    assert window.tabs.count() == 4
+    assert window.tabs.count() == 5
     assert window.tabs.tabText(0) == "Maps + Inspector"
     assert window.model.bundle is None
     assert window.status_label.text() == "No scan loaded"
@@ -129,6 +129,19 @@ def test_line_profile_previews_show_source_maps_and_selected_rows(qtbot, tmp_pat
     assert window.line_profile_tab.primary_preview.row_region.getRegion() == (0, 2)
     assert window.line_profile_tab.compare_preview.row_region.getRegion() == (0, 2)
     assert window.line_profile_tab.mechanical_preview.row_region.getRegion() == (0, 2)
+
+
+@pytest.mark.usefixtures("qapp")
+def test_period_tab_populates_maps_and_spectra(qtbot, tmp_path):
+    _write_grid_scan(tmp_path / "mini.h5")
+    window = MainWindow(root_dir=tmp_path)
+    qtbot.addWidget(window)
+    _load_scan_and_wait(window, qtbot)
+
+    assert window.period_tab.max_map.image is not None
+    assert window.period_tab.min_map.image is not None
+    assert window.period_tab.diff_map.image is not None
+    assert window.period_tab.max_curve.xData is not None
 
 
 @pytest.mark.usefixtures("qapp")
