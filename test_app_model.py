@@ -90,13 +90,15 @@ def test_model_computes_dash_equivalent_maps_and_inspector_data(tmp_path):
 
     settings = MapSettings(harmonic="2w", compare_harmonic="1w", roi_range=model.roi_range)
     maps = model.compute_maps(settings)
-    inspector = model.compute_inspector(settings)
+    specs = [("2w", False), ("2w", True), ("1w", False), ("1w", True)]
+    inspector = model.compute_inspector(settings, specs)
     profile = model.compute_line_profile(settings, rows=(0, 1))
 
     assert set(maps) == {"primary", "primary_bgsub", "compare", "compare_bgsub", "m1a", "m1p", "mechanical"}
     assert maps["primary"].shape == (2, 2)
     assert inspector["roi_trace"].shape == (40,)
-    assert inspector["spectrum"].shape == (4,)
+    assert len(inspector["spectra"]) == 4
+    assert all(spectrum.shape == (4,) for spectrum in inspector["spectra"])
     assert inspector["fft"].shape[1] == 4
     assert profile["x"].tolist() == [0.0, 1.0]
     assert profile["primary"].shape == (2,)

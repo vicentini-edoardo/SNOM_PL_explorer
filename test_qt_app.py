@@ -223,6 +223,25 @@ def test_data_export_writes_npz_and_csv(qtbot, tmp_path):
 
 
 @pytest.mark.usefixtures("qapp")
+def test_data_export_includes_selected_map_panels(qtbot, tmp_path):
+    _write_grid_scan(tmp_path / "mini.h5")
+    window = MainWindow(root_dir=tmp_path)
+    qtbot.addWidget(window)
+    _load_scan_and_wait(window, qtbot)
+
+    window.maps_tab.map_selectors[4].setCurrentText("M2P")
+    window.maps_tab.map_selectors[5].setCurrentText("M2A")
+    window.refresh_plots()
+
+    out_dir = tmp_path / "export-selected"
+    window._export_data_files(out_dir)
+
+    with np.load(out_dir / "maps.npz") as maps:
+        assert "panel_5_M2P" in maps.files
+        assert "panel_6_M2A" in maps.files
+
+
+@pytest.mark.usefixtures("qapp")
 def test_hover_crosshair_syncs_across_maps(qtbot, tmp_path):
     _write_grid_scan(tmp_path / "mini.h5")
     window = MainWindow(root_dir=tmp_path)
@@ -248,7 +267,9 @@ def test_session_settings_roundtrip(qtbot, tmp_path, monkeypatch):
     window = MainWindow(root_dir=tmp_path)
     qtbot.addWidget(window)
     window.bg_low_spin.setValue(12.5)
-    window.harmonic_combo.setCurrentIndex(2)
+    selector = window.maps_tab.map_selectors[0]
+    selector.setCurrentIndex(selector.findData("2w|bg"))
+    window.maps_tab.map_selectors[4].setCurrentText("M2P")
     window.avg3x3_check.setChecked(False)
     window.decomp_clusters_spin.setValue(7)
     window.period_max_shift_spin.setValue(3)
@@ -259,11 +280,20 @@ def test_session_settings_roundtrip(qtbot, tmp_path, monkeypatch):
     qtbot.addWidget(restored)
 
     assert restored.bg_low_spin.value() == 12.5
-    assert restored.harmonic_combo.currentData() == "2w"
+    assert restored.maps_tab.map_selectors[0].currentData() == "2w|bg"
+    assert restored.maps_tab.map_selectors[4].currentText() == "M2P"
     assert restored.avg3x3_check.isChecked() is False
     assert restored.decomp_clusters_spin.value() == 7
     assert restored.period_max_shift_spin.value() == 3
     assert restored.period_min_shift_spin.value() == -2
+
+
+@pytest.mark.usefixtures("qapp")
+def test_two_main_windows_teardown_cleanly(qtbot, tmp_path):
+    first = MainWindow(root_dir=tmp_path)
+    second = MainWindow(root_dir=tmp_path)
+    qtbot.addWidget(first)
+    qtbot.addWidget(second)
 
 
 @pytest.mark.usefixtures("qapp")

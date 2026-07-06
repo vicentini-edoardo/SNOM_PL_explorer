@@ -188,9 +188,7 @@ class SnomAppModel:
         values = {**base.__dict__, **overrides}
         return MapSettings(**values)
 
-    def compute_maps(self, settings: MapSettings) -> dict[str, np.ndarray]:
-        bundle = self._require_bundle()
-        roi_ps, roi_pe = settings.roi_range
+    def _demod_kwargs(self, settings: MapSettings) -> tuple[dict, dict]:
         kwargs = dict(
             target_frequency_hz=settings.target_frequency_hz,
             neighbor_bins=settings.neighbor_bins,
@@ -202,22 +200,40 @@ class SnomAppModel:
             background_neighbor_px=settings.background_neighbor_px,
             **kwargs,
         )
-        primary = get_demod_map_live(bundle, settings.harmonic, roi_ps, roi_pe, **kwargs)
-        primary_bgsub = get_demod_map_bgsub_live(bundle, settings.harmonic, roi_ps, roi_pe, **bg_kwargs)
-        compare = get_demod_map_live(bundle, settings.compare_harmonic, roi_ps, roi_pe, **kwargs)
-        compare_bgsub = get_demod_map_bgsub_live(bundle, settings.compare_harmonic, roi_ps, roi_pe, **bg_kwargs)
+        return kwargs, bg_kwargs
+
+    def demod_map(self, settings: MapSettings, harmonic: str, bgsub: bool) -> np.ndarray:
+        bundle = self._require_bundle()
+        roi_ps, roi_pe = settings.roi_range
+        kwargs, bg_kwargs = self._demod_kwargs(settings)
+        if bgsub:
+            return get_demod_map_bgsub_live(bundle, harmonic, roi_ps, roi_pe, **bg_kwargs)
+        return get_demod_map_live(bundle, harmonic, roi_ps, roi_pe, **kwargs)
+
+    def snom_map(self, settings: MapSettings, channel: str) -> np.ndarray:
+        bundle = self._require_bundle()
+        ny, nx = int(bundle["grid"]["ny"]), int(bundle["grid"]["nx"])
         snom_maps = bundle.get("snom_maps", {})
+        return snom_maps.get(channel, np.full((ny, nx), np.nan, dtype=np.float32))
+
+    def compute_maps(self, settings: MapSettings) -> dict[str, np.ndarray]:
+        primary = self.demod_map(settings, settings.harmonic, False)
+        primary_bgsub = self.demod_map(settings, settings.harmonic, True)
+        compare = self.demod_map(settings, settings.compare_harmonic, False)
+        compare_bgsub = self.demod_map(settings, settings.compare_harmonic, True)
         return {
             "primary": primary,
             "primary_bgsub": primary_bgsub,
             "compare": compare,
             "compare_bgsub": compare_bgsub,
-            "m1a": snom_maps.get("M1A", np.full_like(primary, np.nan)),
-            "m1p": snom_maps.get("M1P", np.full_like(primary, np.nan)),
-            "mechanical": snom_maps.get(settings.mechanical_channel, np.full_like(primary, np.nan)),
+            "m1a": self.snom_map(settings, "M1A"),
+            "m1p": self.snom_map(settings, "M1P"),
+            "mechanical": self.snom_map(settings, settings.mechanical_channel),
         }
 
-    def compute_inspector(self, settings: MapSettings) -> dict[str, np.ndarray]:
+    def compute_inspector(
+        self, settings: MapSettings, specs: list[tuple[str, bool]] | None = None
+    ) -> dict[str, np.ndarray]:
         bundle = self._require_bundle()
         ix, iy = self.selected_pixel
         nx, ny = int(bundle["grid"]["nx"]), int(bundle["grid"]["ny"])
@@ -229,12 +245,19 @@ class SnomAppModel:
             baseline_smooth_px=settings.baseline_smooth_px,
             background_neighbor_px=settings.background_neighbor_px,
         )
+        if specs is None:
+            specs = [(settings.harmonic, False)]
+        spectra = [
+            get_detector_spectrum_bgsub_live(bundle, harmonic, sl_y, sl_x, **bg_common, **common)
+            if bgsub
+            else get_detector_spectrum_live(bundle, harmonic, sl_y, sl_x, **common)
+            for harmonic, bgsub in specs
+        ]
         return {
             "det_axis": bundle["det_axis"],
             "f_axis": bundle["f_axis"],
             "roi_trace": bundle["roi_traces"][iy, ix],
-            "spectrum": get_detector_spectrum_live(bundle, settings.harmonic, sl_y, sl_x, **common),
-            "spectrum_bgsub": get_detector_spectrum_bgsub_live(bundle, settings.harmonic, sl_y, sl_x, **bg_common, **common),
+            "spectra": spectra,
             "baseline": get_detector_baseline_live(bundle, sl_y, sl_x, **bg_common),
             "fft": get_fft_image_live(bundle, sl_y, sl_x, subtract_background=settings.fft_bgsub, **bg_common),
         }

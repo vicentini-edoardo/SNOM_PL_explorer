@@ -13,15 +13,15 @@ from gui.theme import style_plot_item
 class MapsTab(QtWidgets.QWidget):
     def __init__(self):
         super().__init__()
-        self.primary_map = ImagePlotWidget("Map")
-        self.primary_bgsub_map = ImagePlotWidget("Background subtracted")
-        self.compare_map = ImagePlotWidget("Compare map")
-        self.compare_bgsub_map = ImagePlotWidget("Compare background subtracted")
-        self.m1a_map = ImagePlotWidget("M1A")
-        self.m1p_map = ImagePlotWidget("M1P", default_cmap=PHASE_COLORMAP)
+        self.primary_map = ImagePlotWidget("Map", show_title=False)
+        self.primary_bgsub_map = ImagePlotWidget("Background subtracted", show_title=False)
+        self.compare_map = ImagePlotWidget("Compare map", show_title=False)
+        self.compare_bgsub_map = ImagePlotWidget("Compare background subtracted", show_title=False)
+        self.m1a_map = ImagePlotWidget("M1A", show_title=False)
+        self.m1p_map = ImagePlotWidget("M1P", default_cmap=PHASE_COLORMAP, show_title=False)
         layout = QtWidgets.QGridLayout(self)
         layout.setContentsMargins(6, 6, 6, 6)
-        layout.setSpacing(6)
+        layout.setSpacing(2)
         self.map_widgets = [
             self.primary_map,
             self.primary_bgsub_map,
@@ -30,16 +30,29 @@ class MapsTab(QtWidgets.QWidget):
             self.m1a_map,
             self.m1p_map,
         ]
-        for index, widget in enumerate(self.map_widgets):
-            layout.addWidget(widget, index // 2, index % 2)
-            layout.setRowStretch(index // 2, 1)
-            layout.setColumnStretch(index % 2, 1)
+        # Selector sits directly above its plot via interleaved grid rows
+        # (combo row, plot row) rather than a wrapper QWidget: nesting an
+        # ImagePlotWidget (pg.GraphicsLayoutWidget) inside an extra
+        # QWidget/QVBoxLayout container segfaults intermittently under
+        # PyQt6.11 + pyqtgraph 0.13.7 once two MainWindows are alive at once.
+        self.map_selectors = [QtWidgets.QComboBox() for _ in self.map_widgets]
+        for index, (selector, widget) in enumerate(zip(self.map_selectors, self.map_widgets)):
+            row, col = index // 2, index % 2
+            layout.addWidget(selector, row * 2, col)
+            layout.addWidget(widget, row * 2 + 1, col)
+            layout.setRowStretch(row * 2, 0)
+            layout.setRowStretch(row * 2 + 1, 1)
+            layout.setColumnStretch(col, 1)
             widget.pixel_hovered.connect(self._sync_crosshairs)
 
     def _sync_crosshairs(self, x: float, y: float) -> None:
         hide = math.isnan(x)
         for widget in self.map_widgets:
             widget.set_crosshair(None if hide else x, y)
+
+    def cleanup(self) -> None:
+        for widget in self.map_widgets:
+            widget.cleanup()
 
 
 class InspectorTab(QtWidgets.QWidget):
@@ -53,8 +66,11 @@ class InspectorTab(QtWidgets.QWidget):
         self.spectrum_plot.setMinimumHeight(140)
         style_plot_item(self.spectrum_plot.getPlotItem())
         self.spectrum_plot.addLegend(offset=(8, 8))
-        self.spectrum_curve = self.spectrum_plot.plot(name="original", pen=pg.mkPen("#c9d1d9", width=2))
-        self.spectrum_bgsub_curve = self.spectrum_plot.plot(name="bg-sub", pen=pg.mkPen("#d62728", width=2, style=QtCore.Qt.PenStyle.DashLine))
+        spectrum_colors = ["#c9d1d9", "#d62728", "#1f77b4", "#ff7f0e"]
+        self.spectrum_curves = [
+            self.spectrum_plot.plot(name=f"panel {i + 1}", pen=pg.mkPen(color, width=2))
+            for i, color in enumerate(spectrum_colors)
+        ]
         self.baseline_curve = self.spectrum_plot.plot(name="baseline", pen=pg.mkPen("#2ca02c", width=2, style=QtCore.Qt.PenStyle.DotLine))
         self.fft_plot = ImagePlotWidget("FFT", aspect_locked=False)
         self.fft_plot.setMinimumHeight(220)
@@ -68,9 +84,12 @@ class InspectorTab(QtWidgets.QWidget):
         layout.addWidget(self.fft_plot, 3)
 
     def clear(self) -> None:
-        for curve in (self.roi_curve, self.spectrum_curve, self.spectrum_bgsub_curve, self.baseline_curve):
+        for curve in (self.roi_curve, self.baseline_curve, *self.spectrum_curves):
             curve.clear()
         self.fft_plot.set_image(None, "FFT")
+
+    def cleanup(self) -> None:
+        self.fft_plot.cleanup()
 
 
 class MapsInspectorTab(QtWidgets.QWidget):
@@ -93,17 +112,23 @@ class MapsInspectorTab(QtWidgets.QWidget):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.splitter)
 
+    def cleanup(self) -> None:
+        self.maps.cleanup()
+        self.inspector.cleanup()
+
 
 class LineProfileTab(QtWidgets.QWidget):
     def __init__(self, controls_group: QtWidgets.QGroupBox):
         super().__init__()
         self.controls_group = controls_group
-        self.primary_preview = ImagePlotWidget("Primary map")
-        self.compare_preview = ImagePlotWidget("Compare map")
-        self.mechanical_preview = ImagePlotWidget("Mechanical", default_cmap=PHASE_COLORMAP)
-        for preview in (self.primary_preview, self.compare_preview, self.mechanical_preview):
+        self.primary_preview = ImagePlotWidget("Primary map", show_title=False)
+        self.compare_preview = ImagePlotWidget("Compare map", show_title=False)
+        self.mechanical_preview = ImagePlotWidget("Mechanical", default_cmap=PHASE_COLORMAP, show_title=False)
+        preview_widgets = [self.primary_preview, self.compare_preview, self.mechanical_preview]
+        for preview in preview_widgets:
             preview.setMinimumHeight(140)
             preview.setMaximumHeight(200)
+        self.preview_selectors = [QtWidgets.QComboBox() for _ in preview_widgets]
         self.plot = pg.PlotWidget(title="Line profile")
         self.plot.setMinimumHeight(240)
         plot_item = self.plot.getPlotItem()
@@ -113,24 +138,7 @@ class LineProfileTab(QtWidgets.QWidget):
         self.primary_bg_curve = self.plot.plot(name="primary bg-sub", pen=pg.mkPen("#d62728", width=2))
         self.compare_curve = self.plot.plot(name="compare", pen=pg.mkPen("#1f77b4", width=2))
         self.compare_bg_curve = self.plot.plot(name="compare bg-sub", pen=pg.mkPen("#ff7f0e", width=2))
-
-        # Mechanical (neaSNOM) signal gets its own Y axis: units/scale differ
-        # wildly from the optical curves above, so a shared axis flattens it.
-        plot_item.showAxis("right")
-        self.mechanical_viewbox = pg.ViewBox()
-        plot_item.scene().addItem(self.mechanical_viewbox)
-        plot_item.getAxis("right").linkToView(self.mechanical_viewbox)
-        self.mechanical_viewbox.setXLink(plot_item)
-        self.mechanical_viewbox.enableAutoRange(axis=pg.ViewBox.YAxis)
-
-        def _sync_mechanical_viewbox() -> None:
-            self.mechanical_viewbox.setGeometry(plot_item.vb.sceneBoundingRect())
-
-        plot_item.vb.sigResized.connect(_sync_mechanical_viewbox)
-        _sync_mechanical_viewbox()
-        self.mechanical_curve = pg.PlotDataItem(pen=pg.mkPen("#9467bd", width=2))
-        self.mechanical_viewbox.addItem(self.mechanical_curve)
-        plot_item.legend.addItem(self.mechanical_curve, "M1P")
+        self.mechanical_curve = self.plot.plot(name="M1P", pen=pg.mkPen("#9467bd", width=2))
 
         layout = QtWidgets.QVBoxLayout(self)
         layout.setContentsMargins(8, 8, 8, 8)
@@ -139,15 +147,22 @@ class LineProfileTab(QtWidgets.QWidget):
         top.setSpacing(8)
         top.addWidget(self.controls_group, 0)
         previews = QtWidgets.QGridLayout()
-        previews.setSpacing(6)
-        previews.addWidget(self.primary_preview, 0, 0)
-        previews.addWidget(self.compare_preview, 0, 1)
-        previews.addWidget(self.mechanical_preview, 0, 2)
-        for column in range(3):
+        previews.setSpacing(2)
+        # Combo directly above its preview via interleaved grid rows, not a
+        # wrapper QWidget -- see MapsTab for why.
+        for column, (selector, widget) in enumerate(zip(self.preview_selectors, preview_widgets)):
+            previews.addWidget(selector, 0, column)
+            previews.addWidget(widget, 1, column)
             previews.setColumnStretch(column, 1)
+        previews.setRowStretch(0, 0)
+        previews.setRowStretch(1, 1)
         top.addLayout(previews, 1)
         layout.addLayout(top)
         layout.addWidget(self.plot, 1)
+
+    def cleanup(self) -> None:
+        for widget in (self.primary_preview, self.compare_preview, self.mechanical_preview):
+            widget.cleanup()
 
 
 class DecompositionTab(QtWidgets.QWidget):
@@ -206,25 +221,7 @@ class PeriodTab(QtWidgets.QWidget):
         self.spectrum_plot.addLegend(offset=(8, 8))
         self.max_curve = self.spectrum_plot.plot(name="max", pen=pg.mkPen("#d62728", width=2))
         self.min_curve = self.spectrum_plot.plot(name="min", pen=pg.mkPen("#1f77b4", width=2))
-
-        # max-min diff gets its own Y axis: its scale can differ a lot from
-        # the raw max/min curves, so a shared axis flattens it.
-        spectrum_item.showAxis("right")
-        self.diff_viewbox = pg.ViewBox()
-        spectrum_item.scene().addItem(self.diff_viewbox)
-        spectrum_item.getAxis("right").linkToView(self.diff_viewbox)
-        self.diff_viewbox.setXLink(spectrum_item)
-        self.diff_viewbox.enableAutoRange(axis=pg.ViewBox.YAxis)
-
-        def _sync_diff_viewbox() -> None:
-            self.diff_viewbox.setGeometry(spectrum_item.vb.sceneBoundingRect())
-
-        spectrum_item.vb.sigResized.connect(_sync_diff_viewbox)
-        _sync_diff_viewbox()
-        self.diff_curve = pg.PlotDataItem(pen=pg.mkPen("#c9d1d9", width=2))
-        self.diff_viewbox.addItem(self.diff_curve)
-        spectrum_item.legend.addItem(self.diff_curve, "max-min")
-        spectrum_item.getAxis("right").setLabel("max-min")
+        self.diff_curve = self.spectrum_plot.plot(name="max-min", pen=pg.mkPen("#c9d1d9", width=2))
 
         self.trace_plot = pg.PlotWidget(title="ROI trace at cursor")
         trace_item = self.trace_plot.getPlotItem()
@@ -262,3 +259,7 @@ class PeriodTab(QtWidgets.QWidget):
         body.addLayout(plots, 1)
         layout.addLayout(body, 1)
         layout.addWidget(self.trace_plot)
+
+    def cleanup(self) -> None:
+        for widget in (self.max_map, self.min_map, self.diff_map):
+            widget.cleanup()

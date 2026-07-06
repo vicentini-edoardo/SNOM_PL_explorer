@@ -7,3 +7,5 @@ _cache/
 *.h5
 *.hdf5
 *.proc.npz
+graphify-out/
+
