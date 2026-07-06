@@ -68,6 +68,8 @@ class MapSettings:
     fft_bgsub: bool = False
     mechanical_channel: str = "M1P"
     period_window: int = 1
+    period_max_shift: int = 0
+    period_min_shift: int = 0
 
 
 @dataclass(frozen=True)
@@ -251,6 +253,38 @@ class SnomAppModel:
             "mechanical": nanmean_or_nan(maps["mechanical"][row_lo : row_hi + 1, :], axis=0),
         }
 
+    def _period_sample_indices(
+        self,
+        period_avg: np.ndarray,
+        window: int,
+        *,
+        max_shift: int = 0,
+        min_shift: int = 0,
+    ) -> tuple[np.ndarray, np.ndarray]:
+        period_len = period_avg.shape[0]
+        ref = period_avg.mean(axis=1)
+        p_max = (int(np.argmax(ref)) + int(max_shift)) % period_len
+        p_min = (int(np.argmin(ref)) + int(min_shift)) % period_len
+        offsets = np.arange(-window, window + 1)
+        return (p_max + offsets) % period_len, (p_min + offsets) % period_len
+
+    def _selected_pixel_frames(self) -> np.ndarray | None:
+        bundle = self._require_bundle()
+        summary = self.summary
+        if summary is None:
+            raise RuntimeError("No scan loaded")
+        ix, iy = self.selected_pixel
+        det = len(bundle["det_axis"])
+        with h5py.File(summary.path, "r") as h5:
+            for name in h5["points"]:
+                grp = h5[f"points/{name}"]
+                if int(grp.attrs["iy"]) == iy and int(grp.attrs["ix"]) == ix:
+                    frames = np.asarray(grp["frames"], dtype=np.float64)
+                    if frames.ndim == 2 and frames.shape[1] == det:
+                        return frames
+                    return None
+        return None
+
     def _period_cubes(self, settings: MapSettings) -> dict[str, np.ndarray]:
         """Per-detector-pixel average max/min over the modulation period.
 
@@ -294,11 +328,7 @@ class SnomAppModel:
                         continue  # interrupted measurement, too few frames: leave NaN
                     trimmed = frames[: n_periods * period_len]
                     period_avg = trimmed.reshape(n_periods, period_len, det).mean(axis=0)
-                    ref = period_avg.mean(axis=1)
-                    p_max, p_min = int(np.argmax(ref)), int(np.argmin(ref))
-                    offsets = np.arange(-window, window + 1)
-                    idx_max = (p_max + offsets) % period_len
-                    idx_min = (p_min + offsets) % period_len
+                    idx_max, idx_min = self._period_sample_indices(period_avg, window)
                     max_cube[iy, ix] = period_avg[idx_max].mean(axis=0)
                     min_cube[iy, ix] = period_avg[idx_min].mean(axis=0)
 
@@ -314,12 +344,32 @@ class SnomAppModel:
         return {"max": max_map, "min": min_map, "diff": max_map - min_map}
 
     def compute_period_spectra(self, settings: MapSettings) -> dict[str, np.ndarray]:
-        cubes = self._period_cubes(settings)
-        ix, iy = self.selected_pixel
-        max_spec = cubes["max"][iy, ix]
-        min_spec = cubes["min"][iy, ix]
+        bundle = self._require_bundle()
+        meta = bundle["metadata"]
+        fs = float(meta["trigger_frequency_hz"])
+        f0 = settings.target_frequency_hz or float(meta.get("f_expected_hz", 4.0))
+        window = max(0, int(settings.period_window))
+        period_len = max(2, round(fs / f0))
+        det_axis = bundle["det_axis"]
+        det = len(det_axis)
+        max_spec = np.full(det, np.nan, dtype=np.float64)
+        min_spec = np.full(det, np.nan, dtype=np.float64)
+        frames = self._selected_pixel_frames()
+        if frames is not None:
+            n_periods = frames.shape[0] // period_len
+            if n_periods >= 1:
+                trimmed = frames[: n_periods * period_len]
+                period_avg = trimmed.reshape(n_periods, period_len, det).mean(axis=0)
+                idx_max, idx_min = self._period_sample_indices(
+                    period_avg,
+                    window,
+                    max_shift=settings.period_max_shift,
+                    min_shift=settings.period_min_shift,
+                )
+                max_spec = period_avg[idx_max].mean(axis=0)
+                min_spec = period_avg[idx_min].mean(axis=0)
         return {
-            "det_axis": cubes["det_axis"],
+            "det_axis": det_axis,
             "max": max_spec,
             "min": min_spec,
             "diff": max_spec - min_spec,
@@ -338,16 +388,8 @@ class SnomAppModel:
         window = max(0, int(settings.period_window))
         period_len = max(2, round(fs / f0))
         ps, pe = settings.roi_range
-        ix, iy = self.selected_pixel
         det = len(bundle["det_axis"])
-
-        frames = None
-        with h5py.File(summary.path, "r") as h5:
-            for name in h5["points"]:
-                grp = h5[f"points/{name}"]
-                if int(grp.attrs["iy"]) == iy and int(grp.attrs["ix"]) == ix:
-                    frames = np.asarray(grp["frames"], dtype=np.float64)
-                    break
+        frames = self._selected_pixel_frames()
 
         empty = np.zeros(0, dtype=np.float64)
         if frames is None or frames.ndim != 2 or frames.shape[1] != det:
@@ -360,11 +402,13 @@ class SnomAppModel:
         n_periods = n // period_len
         if n_periods >= 1:
             trimmed = frames[: n_periods * period_len]
-            ref = trimmed.reshape(n_periods, period_len, det).mean(axis=0).mean(axis=1)
-            p_max, p_min = int(np.argmax(ref)), int(np.argmin(ref))
-            offsets = np.arange(-window, window + 1)
-            idx_max = (p_max + offsets) % period_len
-            idx_min = (p_min + offsets) % period_len
+            period_avg = trimmed.reshape(n_periods, period_len, det).mean(axis=0)
+            idx_max, idx_min = self._period_sample_indices(
+                period_avg,
+                window,
+                max_shift=settings.period_max_shift,
+                min_shift=settings.period_min_shift,
+            )
             for p in range(n_periods):
                 base = p * period_len
                 max_mask[base + idx_max] = True

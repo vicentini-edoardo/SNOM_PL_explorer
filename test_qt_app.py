@@ -251,6 +251,8 @@ def test_session_settings_roundtrip(qtbot, tmp_path, monkeypatch):
     window.harmonic_combo.setCurrentIndex(2)
     window.avg3x3_check.setChecked(False)
     window.decomp_clusters_spin.setValue(7)
+    window.period_max_shift_spin.setValue(3)
+    window.period_min_shift_spin.setValue(-2)
     window._save_session()
 
     restored = MainWindow(root_dir=tmp_path)
@@ -260,6 +262,8 @@ def test_session_settings_roundtrip(qtbot, tmp_path, monkeypatch):
     assert restored.harmonic_combo.currentData() == "2w"
     assert restored.avg3x3_check.isChecked() is False
     assert restored.decomp_clusters_spin.value() == 7
+    assert restored.period_max_shift_spin.value() == 3
+    assert restored.period_min_shift_spin.value() == -2
 
 
 @pytest.mark.usefixtures("qapp")

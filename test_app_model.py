@@ -136,6 +136,26 @@ def test_model_computes_period_trace_with_max_min_highlight(tmp_path):
     assert not np.any(trace["max_mask"] & trace["min_mask"])
 
 
+def test_model_period_selected_pixel_shifts_move_trace_and_spectra(tmp_path):
+    _write_grid_scan(tmp_path / "mini.h5")
+    model = SnomAppModel(tmp_path)
+    model.load_scan(".", "mini.h5", recompute=True)
+    model.select_pixel(0, 1)
+
+    base = model.map_settings(period_window=0)
+    shifted = model.map_settings(period_window=0, period_max_shift=1, period_min_shift=-1)
+
+    base_trace = model.compute_period_trace(base)
+    shifted_trace = model.compute_period_trace(shifted)
+    base_spectra = model.compute_period_spectra(base)
+    shifted_spectra = model.compute_period_spectra(shifted)
+
+    assert np.array_equal(np.flatnonzero(shifted_trace["max_mask"]), np.flatnonzero(base_trace["max_mask"]) + 1)
+    assert np.array_equal(np.flatnonzero(shifted_trace["min_mask"]), np.flatnonzero(base_trace["min_mask"]) - 1)
+    assert not np.allclose(shifted_spectra["max"], base_spectra["max"])
+    assert not np.allclose(shifted_spectra["min"], base_spectra["min"])
+
+
 def test_model_period_max_min_skips_interrupted_pixel(tmp_path):
     scan_path = tmp_path / "mini.h5"
     _write_grid_scan(scan_path)

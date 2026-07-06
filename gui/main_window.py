@@ -71,6 +71,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.row_end_spin = QtWidgets.QSpinBox()
         self.mechanical_combo = QtWidgets.QComboBox()
         self.period_window_spin = QtWidgets.QSpinBox()
+        self.period_max_shift_spin = QtWidgets.QSpinBox()
+        self.period_min_shift_spin = QtWidgets.QSpinBox()
         self.harmonic_combo = QtWidgets.QComboBox()
         self.compare_combo = QtWidgets.QComboBox()
         self.target_freq_spin = QtWidgets.QDoubleSpinBox()
@@ -204,6 +206,8 @@ class MainWindow(QtWidgets.QMainWindow):
             ("decomp/components", self.decomp_components_spin),
             ("decomp/clusters", self.decomp_clusters_spin),
             ("period/window", self.period_window_spin),
+            ("period/max_shift", self.period_max_shift_spin),
+            ("period/min_shift", self.period_min_shift_spin),
         ]
 
     def _persisted_checks(self) -> list[tuple[str, QtWidgets.QCheckBox]]:
@@ -341,6 +345,8 @@ class MainWindow(QtWidgets.QMainWindow):
         form.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
         form.setFieldGrowthPolicy(QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         self._add_row(form, "Peak window ±", self.period_window_spin)
+        self._add_row(form, "Max shift", self.period_max_shift_spin)
+        self._add_row(form, "Min shift", self.period_min_shift_spin)
         group.setMinimumWidth(220)
         group.setMaximumWidth(260)
         return group
@@ -380,6 +386,9 @@ class MainWindow(QtWidgets.QMainWindow):
             spin.setRange(0, 100)
         self.period_window_spin.setRange(0, 20)
         self.period_window_spin.setValue(1)
+        for spin in (self.period_max_shift_spin, self.period_min_shift_spin):
+            spin.setRange(-999, 999)
+            spin.setValue(0)
         self.decomp_components_spin.setRange(2, 256)
         self.decomp_components_spin.setValue(5)
         self.decomp_clusters_spin.setRange(2, 128)
@@ -438,6 +447,8 @@ class MainWindow(QtWidgets.QMainWindow):
             self.avg3x3_check,
             self.fft_bgsub_check,
             self.period_window_spin,
+            self.period_max_shift_spin,
+            self.period_min_shift_spin,
         ]:
             if hasattr(widget, "valueChanged"):
                 widget.valueChanged.connect(self.refresh_plots)
@@ -574,6 +585,8 @@ class MainWindow(QtWidgets.QMainWindow):
             fft_bgsub=self.fft_bgsub_check.isChecked(),
             mechanical_channel=self.mechanical_combo.currentText() or "M1P",
             period_window=self.period_window_spin.value(),
+            period_max_shift=self.period_max_shift_spin.value(),
+            period_min_shift=self.period_min_shift_spin.value(),
         )
 
     def refresh_plots(self) -> None:
@@ -848,6 +861,9 @@ class MainWindow(QtWidgets.QMainWindow):
                 "neighbor_bins": settings.neighbor_bins,
                 "avg3x3": settings.avg3x3,
                 "fft_bgsub": settings.fft_bgsub,
+                "period_window": settings.period_window,
+                "period_max_shift": settings.period_max_shift,
+                "period_min_shift": settings.period_min_shift,
             },
             "selected_pixel": {"ix": ix, "iy": iy},
             "line_rows": [self.row_start_spin.value(), self.row_end_spin.value()],
