@@ -23,7 +23,7 @@ from snom_pipeline import BG_HIGH_HZ, BG_LOW_HZ, HARMONICS, SNOM_CHANNELS
 logger = logging.getLogger(__name__)
 
 ROOT_DIR = Path(__file__).resolve().parents[1]
-CONTROL_LABEL_WIDTH = 92
+CONTROL_LABEL_WIDTH = 84
 CONTROL_FIELD_MIN_WIDTH = 110
 DEMOD_LABELS = {"0w": "0omega (DC)", "1w": "1omega", "2w": "2omega", "3w": "3omega"}
 SETTINGS_DISABLE_ENV = "SNOM_PL_NO_SETTINGS"
@@ -118,7 +118,7 @@ class MainWindow(QtWidgets.QMainWindow):
         self.main_splitter.addWidget(self.control_panel)
         self.main_splitter.addWidget(self.tabs)
         self.main_splitter.setChildrenCollapsible(False)
-        self.main_splitter.setSizes([260, 1080])
+        self.main_splitter.setSizes([300, 1040])
         self.main_splitter.setStretchFactor(1, 1)
         self.setCentralWidget(self.main_splitter)
 
@@ -263,8 +263,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _build_control_panel(self) -> QtWidgets.QWidget:
         panel = QtWidgets.QWidget()
-        panel.setMinimumWidth(260)
-        panel.setMaximumWidth(340)
+        panel.setMinimumWidth(280)
+        panel.setMaximumWidth(360)
         outer = QtWidgets.QVBoxLayout(panel)
         outer.setContentsMargins(6, 6, 6, 6)
         outer.setSpacing(6)
@@ -282,8 +282,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
         content = QtWidgets.QWidget()
         content_layout = QtWidgets.QVBoxLayout(content)
-        content_layout.setContentsMargins(0, 0, 0, 0)
-        content_layout.setSpacing(6)
+        content_layout.setContentsMargins(0, 0, 4, 0)
+        content_layout.setSpacing(4)
 
         source_group, source_form = self._section_form("Source")
         self._add_row(source_form, "Root", choose_root_btn)
@@ -388,8 +388,8 @@ class MainWindow(QtWidgets.QMainWindow):
     def _section_form(self, title: str) -> tuple[QtWidgets.QGroupBox, QtWidgets.QFormLayout]:
         group = QtWidgets.QGroupBox(title)
         form = QtWidgets.QFormLayout(group)
-        form.setContentsMargins(8, 8, 8, 6)
-        form.setSpacing(5)
+        form.setContentsMargins(8, 6, 8, 5)
+        form.setSpacing(3)
         form.setLabelAlignment(QtCore.Qt.AlignmentFlag.AlignLeft)
         form.setFieldGrowthPolicy(QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         return group, form
@@ -1084,7 +1084,13 @@ def main() -> int:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
     app = QtWidgets.QApplication.instance() or QtWidgets.QApplication(sys.argv)
+    icon_path = Path(__file__).resolve().parent.parent / "PL_Explorer.icns"
+    if icon_path.exists():
+        icon = QtGui.QIcon(str(icon_path))
+        app.setWindowIcon(icon)
     pg.setConfigOptions(imageAxisOrder="col-major")
     window = MainWindow()
+    if icon_path.exists():
+        window.setWindowIcon(icon)
     window.show()
     return app.exec()
