@@ -196,3 +196,40 @@ def test_model_computes_decomposition_summary(tmp_path):
     assert result.scree_values.shape[0] >= 1
     assert result.category_means.shape == (2, 4)
     assert result.centroids.shape[0] == 2
+
+
+def test_model_computes_0w_decomposition_for_single_frame_scan(tmp_path):
+    _write_grid_scan(tmp_path / "single.h5", frames_count=1)
+    model = SnomAppModel(tmp_path)
+    model.load_scan(".", "single.h5", recompute=True)
+
+    inspector = model.compute_inspector(model.map_settings(harmonic="0w"), [("0w", False)])
+    result = model.compute_decomposition(
+        harmonic="0w",
+        method="PCA",
+        n_components=1,
+        categorizer="kmeans",
+        n_clusters=2,
+        preprocess=(),
+        detector_range=(0, 3),
+    )
+
+    assert np.isfinite(inspector["spectra"][0]).all()
+    assert result.label_map.shape == (2, 2)
+    assert result.category_means.shape == (2, 4)
+
+
+def test_single_frame_inspector_uses_selected_pixel_spectrum(tmp_path):
+    scan_path = tmp_path / "single.h5"
+    _write_grid_scan(scan_path, frames_count=1)
+    with h5py.File(scan_path, "a") as h5:
+        h5["points/point_000_000/frames"][...] = np.array([[1.0, 2.0, 3.0, 4.0]], dtype=np.float32)
+        h5["points/point_001_001/frames"][...] = np.array([[10.0, 20.0, 30.0, 40.0]], dtype=np.float32)
+    model = SnomAppModel(tmp_path)
+    model.load_scan(".", "single.h5", recompute=True)
+    model.select_pixel(0, 0)
+
+    inspector = model.compute_inspector(model.map_settings(harmonic="0w", avg3x3=True), [("0w", False), ("0w", True)])
+
+    np.testing.assert_allclose(inspector["spectra"][0], np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32))
+    np.testing.assert_allclose(inspector["spectra"][1], np.array([1.0, 2.0, 3.0, 4.0], dtype=np.float32))

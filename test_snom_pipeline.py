@@ -60,6 +60,20 @@ def test_process_scan_original_demod_uses_roi_time_trace(tmp_path):
     assert float(bundle["demod_maps_bgsub"]["2w"][0, 0]) > 1.0
 
 
+def test_process_scan_single_frame_keeps_0w_detector_spectrum(tmp_path):
+    frames = np.array([[10.0, 20.0, 30.0]], dtype=np.float32)
+    path = tmp_path / "single_frame.h5"
+    _write_one_point_scan(path, frames)
+
+    bundle = process_scan(path)
+
+    np.testing.assert_allclose(bundle["fft_cube"][0, 0, 0], frames[0])
+    np.testing.assert_allclose(bundle["det_spectra"]["0w"][0, 0], frames[0])
+    assert float(bundle["demod_maps"]["0w"][0, 0]) == 20.0
+    assert float(bundle["demod_maps_bgsub"]["0w"][0, 0]) == 20.0
+    assert np.isnan(bundle["det_spectra"]["1w"][0, 0]).all()
+
+
 def test_cache_stamp_includes_processing_version(tmp_path):
     path = tmp_path / "scan.h5"
     path.write_bytes(b"scan")

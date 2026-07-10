@@ -64,6 +64,20 @@ def test_loading_scan_initializes_controls_and_plots(qtbot, tmp_path):
 
 
 @pytest.mark.usefixtures("qapp")
+def test_loading_single_frame_scan_keeps_0w_views_available(qtbot, tmp_path):
+    _write_grid_scan(tmp_path / "single.h5", frames_count=1)
+    window = MainWindow(root_dir=tmp_path)
+    qtbot.addWidget(window)
+
+    _load_scan_and_wait(window, qtbot)
+
+    assert np.isfinite(window.maps_tab.primary_map.image).all()
+    assert window.inspector_tab.spectrum_curves[0].xData is not None
+    assert window.line_profile_tab.primary_curve.xData is not None
+    assert window.decomp_harmonic_combo.currentData() == "0w"
+
+
+@pytest.mark.usefixtures("qapp")
 def test_left_control_panel_keeps_display_and_decomposition_options_out(qtbot, tmp_path):
     window = MainWindow(root_dir=tmp_path)
     qtbot.addWidget(window)

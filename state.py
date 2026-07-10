@@ -251,6 +251,15 @@ def get_detector_spectrum_bgsub_live(
     target_frequency_hz: float | None = None,
     neighbor_bins: int | float | None = None,
 ) -> np.ndarray:
+    if harmonic == "0w" and len(bundle["f_axis"]) < 2:
+        return get_detector_spectrum_live(
+            bundle,
+            harmonic,
+            sl_y,
+            sl_x,
+            target_frequency_hz=target_frequency_hz,
+            neighbor_bins=neighbor_bins,
+        )
     baseline = _baseline_cube_from_frequency_range(bundle, bg_low, bg_high, baseline_smooth_px, background_neighbor_px)
     fft_bgsub = bundle["fft_cube"][sl_y, sl_x] - baseline[sl_y, sl_x, None, :]
     spectra = _integrated_detector_spectra_from_fft(
@@ -398,6 +407,15 @@ def get_demod_map_bgsub_live(
     target_frequency_hz: float | None = None,
     neighbor_bins: int | float | None = None,
 ) -> np.ndarray:
+    if harmonic == "0w" and len(bundle["f_axis"]) < 2:
+        return get_demod_map_live(
+            bundle,
+            harmonic,
+            roi_ps,
+            roi_pe,
+            target_frequency_hz=target_frequency_hz,
+            neighbor_bins=neighbor_bins,
+        )
     baseline = _baseline_cube_from_frequency_range(bundle, bg_low, bg_high, baseline_smooth_px, background_neighbor_px)
     fft_bgsub = bundle["fft_cube"] - baseline[:, :, None, :]
     return _integrated_demod_map_from_fft(
@@ -418,6 +436,79 @@ def finite_range(arr: np.ndarray, fallback=(0.0, 1.0)) -> tuple[float, float]:
         return fallback
     lo, hi = float(np.nanmin(fin)), float(np.nanmax(fin))
     return (lo - 1.0, hi + 1.0) if lo == hi else (lo, hi)
+
+
+def correct_linear_drift(map2d: np.ndarray, scan_mode: str = "raster") -> np.ndarray:
+    """Remove a linear drift along the acquisition sequence from a 2D map.
+
+    Unfolds the map into the pixel order the scanner actually visited
+    (raster: every row left-to-right; snake: alternating row direction),
+    fits a linear trend against that sequence index, and subtracts it
+    while preserving the map's overall mean level and NaNs.
+
+    scan_mode="plane" ignores acquisition order and instead fits a 2D
+    plane z = a*ix + b*iy + c over pixel coordinates (for drift that is
+    spatial/tilt rather than time-linear).
+    """
+    ny, nx = map2d.shape
+    iy, ix = np.mgrid[0:ny, 0:nx]
+    finite = np.isfinite(map2d)
+    if finite.sum() < 3:
+        return map2d.copy()
+
+    if scan_mode == "plane":
+        a_mat = np.column_stack([ix[finite], iy[finite], np.ones(finite.sum())])
+        coeffs, *_ = np.linalg.lstsq(a_mat, map2d[finite].astype(np.float64), rcond=None)
+        trend = coeffs[0] * ix.astype(np.float64) + coeffs[1] * iy.astype(np.float64) + coeffs[2]
+    else:
+        seq_x = np.where(iy % 2 == 0, ix, nx - 1 - ix) if scan_mode == "snake" else ix
+        seq_index = iy * nx + seq_x
+        t = seq_index[finite].astype(np.float64)
+        v = map2d[finite].astype(np.float64)
+        slope, intercept = np.polyfit(t, v, 1)
+        trend = slope * seq_index.astype(np.float64) + intercept
+
+    corrected = map2d.astype(np.float64) - (trend - np.mean(trend[finite]))
+    corrected[~finite] = np.nan
+    return corrected.astype(map2d.dtype)
+
+
+def correct_row_leveling(map2d: np.ndarray, method: str = "linear") -> np.ndarray:
+    """Level each row of a 2D map independently, applied as its own pass
+    (e.g. after correct_linear_drift, or on its own).
+
+    method="linear" fits and removes a linear trend along ix within
+    each row, keeping each row's own mean (levels within-row tilt, e.g.
+    fast-axis piezo nonlinearity, without forcing rows to a common
+    baseline).
+    method="median" subtracts each row's median and collapses all rows
+    to a common baseline (robust to per-row outlier features; also
+    removes row-to-row offset jumps, e.g. feedback/thermal drift).
+    """
+    ny, nx = map2d.shape
+    _, ix = np.mgrid[0:ny, 0:nx]
+    finite = np.isfinite(map2d)
+    if finite.sum() < 1:
+        return map2d.copy()
+
+    corrected = map2d.astype(np.float64).copy()
+    for row in range(ny):
+        row_finite = finite[row]
+        if method == "median":
+            if row_finite.sum() < 1:
+                continue
+            corrected[row, row_finite] -= np.median(corrected[row, row_finite])
+        else:
+            if row_finite.sum() < 2:
+                continue
+            x = ix[row, row_finite].astype(np.float64)
+            v = corrected[row, row_finite]
+            slope, intercept = np.polyfit(x, v, 1)
+            trend = slope * ix[row].astype(np.float64) + intercept
+            corrected[row, row_finite] -= (trend[row_finite] - np.mean(trend[row_finite]))
+    corrected += np.mean(map2d[finite].astype(np.float64)) - np.mean(corrected[finite])
+    corrected[~finite] = np.nan
+    return corrected.astype(map2d.dtype)
 
 
 def nanmean_or_nan(arr: np.ndarray, axis=None) -> np.ndarray:

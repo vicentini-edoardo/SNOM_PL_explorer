@@ -81,6 +81,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.background_neighbor_spin = QtWidgets.QSpinBox()
         self.avg3x3_check = QtWidgets.QCheckBox("3x3 average")
         self.fft_bgsub_check = QtWidgets.QCheckBox("FFT bg-sub")
+        self.z_drift_check = QtWidgets.QCheckBox("Correct Z drift")
+        self.z_drift_mode_combo = QtWidgets.QComboBox()
+        self.z_row_level_combo = QtWidgets.QComboBox()
         self.decomp_harmonic_combo = QtWidgets.QComboBox()
         self.decomp_method_combo = QtWidgets.QComboBox()
         self.decomp_components_spin = QtWidgets.QSpinBox()
@@ -151,6 +154,8 @@ class MainWindow(QtWidgets.QMainWindow):
                 ("params/export_format", self.export_format_combo),
                 ("decomp/method", self.decomp_method_combo),
                 ("decomp/categorizer", self.decomp_categorizer_combo),
+                ("params/z_drift_scan_mode", self.z_drift_mode_combo),
+                ("params/z_row_level_mode", self.z_row_level_combo),
             ):
                 index = combo.findText(settings.value(key, "", str))
                 if index >= 0:
@@ -199,6 +204,8 @@ class MainWindow(QtWidgets.QMainWindow):
         settings.setValue("decomp/method", self.decomp_method_combo.currentText())
         settings.setValue("decomp/categorizer", self.decomp_categorizer_combo.currentText())
         settings.setValue("decomp/harmonic", self.decomp_harmonic_combo.currentData())
+        settings.setValue("params/z_drift_scan_mode", self.z_drift_mode_combo.currentText())
+        settings.setValue("params/z_row_level_mode", self.z_row_level_combo.currentText())
         for i, combo in enumerate(self.maps_tab.map_selectors):
             settings.setValue(f"params/map_sel_{i}", combo.currentData() or combo.currentText())
         for i, combo in enumerate(self.line_profile_tab.preview_selectors):
@@ -227,6 +234,7 @@ class MainWindow(QtWidgets.QMainWindow):
         return [
             ("params/avg3x3", self.avg3x3_check),
             ("params/fft_bgsub", self.fft_bgsub_check),
+            ("params/z_drift_correct", self.z_drift_check),
             ("decomp/bgsub", self.decomp_bgsub_check),
             ("decomp/l2norm", self.decomp_l2_check),
             ("decomp/standardize", self.decomp_standardize_check),
@@ -300,12 +308,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self._add_row(background_form, "Nbr avg px", self.background_neighbor_spin)
         background_form.addRow(self.fft_bgsub_check)
 
+        z_drift_group, z_drift_form = self._section_form("Z drift")
+        self._add_row(z_drift_form, "Scan mode", self.z_drift_mode_combo)
+        z_drift_form.addRow(self.z_drift_check)
+        self._add_row(z_drift_form, "Row leveling", self.z_row_level_combo)
+
         export_group, export_form = self._section_form("Export")
         self._add_row(export_form, "Format", self.export_format_combo)
         export_form.addRow(self.export_btn)
         export_form.addRow(self.export_data_btn)
 
-        for group in (source_group, demod_group, background_group, export_group):
+        for group in (source_group, demod_group, background_group, z_drift_group, export_group):
             content_layout.addWidget(group)
         content_layout.addStretch(1)
 
@@ -435,6 +448,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self.background_neighbor_spin.setRange(1, 999)
         self.background_neighbor_spin.setSingleStep(2)
         self.background_neighbor_spin.setValue(1)
+        for label, value in (("Raster", "raster"), ("Snake", "snake"), ("Plane", "plane")):
+            self.z_drift_mode_combo.addItem(label, value)
+        for label, value in (("None", "none"), ("Linear", "linear"), ("Median", "median")):
+            self.z_row_level_combo.addItem(label, value)
         self.avg3x3_check.setChecked(True)
         self.decomp_standardize_check.setChecked(True)
         self.decomp_normalize_spectra_check.setChecked(True)
@@ -480,6 +497,9 @@ class MainWindow(QtWidgets.QMainWindow):
             self.background_neighbor_spin,
             self.avg3x3_check,
             self.fft_bgsub_check,
+            self.z_drift_check,
+            self.z_drift_mode_combo,
+            self.z_row_level_combo,
             self.period_window_spin,
             self.period_max_shift_spin,
             self.period_min_shift_spin,
@@ -598,6 +618,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.row_start_spin.setValue(self.model.line_rows[0])
         self.row_end_spin.setValue(self.model.line_rows[1])
         self.target_freq_spin.setValue(self.model.target_frequency_hz)
+        if self.model.summary and int(self.model.summary.metadata.get("n_block", 0)) <= 1:
+            self.decomp_harmonic_combo.setCurrentIndex(self.decomp_harmonic_combo.findData("0w"))
         self._loading_controls = False
 
     @staticmethod
@@ -634,6 +656,9 @@ class MainWindow(QtWidgets.QMainWindow):
             period_window=self.period_window_spin.value(),
             period_max_shift=self.period_max_shift_spin.value(),
             period_min_shift=self.period_min_shift_spin.value(),
+            z_drift_correct=self.z_drift_check.isChecked(),
+            z_drift_scan_mode=self.z_drift_mode_combo.currentData() or "raster",
+            z_row_level_mode=self.z_row_level_combo.currentData() or "none",
         )
 
     def refresh_plots(self) -> None:
@@ -670,6 +695,9 @@ class MainWindow(QtWidgets.QMainWindow):
             legend.addItem(curve, label)
         self.inspector_tab.baseline_curve.setData(det_axis, data["baseline"])
         fft_data = data["fft"][1:, :]
+        if fft_data.size == 0 or len(data["f_axis"]) < 2:
+            self.inspector_tab.fft_plot.set_image(None, "FFT unavailable")
+            return
         self.inspector_tab.fft_plot.set_image(
             fft_data,
             f"FFT ix={ix} iy={iy}",
@@ -824,8 +852,23 @@ class MainWindow(QtWidgets.QMainWindow):
             else:
                 y = mean
             self.decomposition_tab.category_spectra_plot.plot(result.detector_axis, y, name=f"cat {idx}", pen=pens[idx])
-        for idx, centroid in enumerate(result.centroids):
-            self.decomposition_tab.centroids_plot.plot(np.arange(len(centroid)), centroid, name=f"cluster {idx}", pen=pens[idx])
+        scores = result.scores
+        labels = result.labels
+        for idx in range(n_cats):
+            mask = labels == idx
+            if not np.any(mask):
+                continue
+            brush = pg.mkBrush(tuple(int(v) for v in cat_colors[idx]))
+            self.decomposition_tab.centroids_plot.plot(
+                scores[mask, 0],
+                scores[mask, 1] if scores.shape[1] > 1 else np.zeros(mask.sum()),
+                pen=None,
+                symbol="o",
+                symbolSize=4,
+                symbolPen=None,
+                symbolBrush=brush,
+                name=f"cat {idx}",
+            )
 
     def _export_widget(self, widget: QtWidgets.QWidget, name: str, out_dir: Path, fmt: str) -> None:
         if fmt == "PNG":

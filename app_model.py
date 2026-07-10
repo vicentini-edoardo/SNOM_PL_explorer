@@ -27,6 +27,8 @@ from snom_pipeline import (
 from state import (
     _baseline_cube_from_frequency_range,
     _integrated_detector_spectra_from_fft,
+    correct_linear_drift,
+    correct_row_leveling,
     discover_h5_files,
     get_demod_map_bgsub_live,
     get_demod_map_live,
@@ -70,6 +72,9 @@ class MapSettings:
     period_window: int = 1
     period_max_shift: int = 0
     period_min_shift: int = 0
+    z_drift_correct: bool = False
+    z_drift_scan_mode: str = "raster"
+    z_row_level_mode: str = "none"
 
 
 @dataclass(frozen=True)
@@ -82,6 +87,8 @@ class DecompositionResult:
     detector_axis: np.ndarray
     method: str
     categorizer: str
+    scores: np.ndarray
+    labels: np.ndarray
 
 
 def _parse_float(value, default: float | None = None) -> float | None:
@@ -214,7 +221,13 @@ class SnomAppModel:
         bundle = self._require_bundle()
         ny, nx = int(bundle["grid"]["ny"]), int(bundle["grid"]["nx"])
         snom_maps = bundle.get("snom_maps", {})
-        return snom_maps.get(channel, np.full((ny, nx), np.nan, dtype=np.float32))
+        result = snom_maps.get(channel, np.full((ny, nx), np.nan, dtype=np.float32))
+        if channel == "Z":
+            if settings.z_drift_correct:
+                result = correct_linear_drift(result, settings.z_drift_scan_mode)
+            if settings.z_row_level_mode != "none":
+                result = correct_row_leveling(result, settings.z_row_level_mode)
+        return result
 
     def compute_maps(self, settings: MapSettings) -> dict[str, np.ndarray]:
         primary = self.demod_map(settings, settings.harmonic, False)
@@ -237,7 +250,8 @@ class SnomAppModel:
         bundle = self._require_bundle()
         ix, iy = self.selected_pixel
         nx, ny = int(bundle["grid"]["nx"]), int(bundle["grid"]["ny"])
-        sl_y, sl_x = get_nb_slice(ix, iy, nx, ny, settings.avg3x3)
+        avg3x3 = settings.avg3x3 and int(bundle["metadata"].get("n_block", 0)) > 1
+        sl_y, sl_x = get_nb_slice(ix, iy, nx, ny, avg3x3)
         common = dict(target_frequency_hz=settings.target_frequency_hz, neighbor_bins=settings.neighbor_bins)
         bg_common = dict(
             bg_low=settings.bg_low_hz,
@@ -456,7 +470,7 @@ class SnomAppModel:
         options = set(preprocess)
         target_hz = settings.target_frequency_hz
         baseline_cube = None
-        if "bgsub" in options:
+        if "bgsub" in options and not (harmonic == "0w" and len(bundle["f_axis"]) < 2):
             baseline_cube = _baseline_cube_from_frequency_range(
                 bundle,
                 settings.bg_low_hz,
@@ -499,7 +513,7 @@ class SnomAppModel:
         raw_flat = det_cube.astype(np.float64).reshape(ny * nx, -1)
         means, stds = category_mean_spectra(raw_flat[valid_idx], labels, n_clusters)
         label_map = scatter_to_map(labels.astype(np.float64), valid_idx, ny, nx)
-        return DecompositionResult(label_map, scree_values, means, stds, centroids, det_axis, method, categorizer)
+        return DecompositionResult(label_map, scree_values, means, stds, centroids, det_axis, method, categorizer, scores, labels)
 
     def _require_bundle(self) -> dict:
         if self.bundle is None:

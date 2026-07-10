@@ -139,6 +139,26 @@ def test_background_subtracted_map_uses_same_scaled_bins_as_original():
     np.testing.assert_allclose(bgsub, np.array([[8.0]], dtype=np.float32))
 
 
+def test_single_frame_0w_background_subtraction_matches_original():
+    fft_cube = np.array([[[[10.0, 20.0], [np.nan, np.nan]]]], dtype=np.float32)
+    bundle = {
+        "fft_cube": fft_cube,
+        "f_axis": np.array([0.0], dtype=np.float32),
+        "metadata": {
+            "f_expected_hz": 4.0,
+            "f_search_halfwidth_hz": 0.1,
+            "trigger_frequency_hz": 40.0,
+            "roi_method": "mean",
+        },
+    }
+
+    spectrum = get_detector_spectrum_bgsub_live(bundle, "0w", slice(0, 1), slice(0, 1))
+    demod_map = get_demod_map_bgsub_live(bundle, "0w", 0, 1)
+
+    np.testing.assert_allclose(spectrum, np.array([10.0, 20.0], dtype=np.float32))
+    np.testing.assert_allclose(demod_map, np.array([[15.0]], dtype=np.float32))
+
+
 def test_get_detector_spectrum_live_uses_scaled_bins_and_neighbor_sum():
     fft_cube = np.zeros((1, 1, 5, 2), dtype=np.float32)
     fft_cube[0, 0, 1:4, :] = [[1.0, 2.0], [3.0, 4.0], [5.0, 6.0]]

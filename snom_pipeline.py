@@ -94,7 +94,10 @@ def point_fft_matrix(frames: np.ndarray, meta: dict) -> tuple[np.ndarray, np.nda
     n_freq = len(f_axis)
 
     if n < 2:
-        return f_axis, np.full((n_freq, det), np.nan, dtype=np.float32)
+        fft = np.full((n_freq, det), np.nan, dtype=np.float32)
+        if n == 1:
+            fft[0, :] = chunk[0].astype(np.float32)
+        return f_axis, fft
 
     dc = np.mean(chunk, axis=0)  # (det,)
     win = _window_fn(n, meta.get("window", "hann"))
@@ -306,8 +309,12 @@ def process_scan(
                 demod_maps[h][iy, ix] = sc[h]
 
             # Map scalars – background-subtracted
-            fft_bg = (fft - bl[None, :]).astype(np.float32)
-            sc_bg = roi_scalars(fft_bg, f_axis, meta)
+            if n_block < 2:
+                sc_bg = {"0w": sc["0w"], "1w": float("nan"), "2w": float("nan"), "3w": float("nan")}
+                fft_bg = np.full_like(fft, np.nan, dtype=np.float32)
+            else:
+                fft_bg = (fft - bl[None, :]).astype(np.float32)
+                sc_bg = roi_scalars(fft_bg, f_axis, meta)
             for h in HARMONICS:
                 demod_maps_bgsub[h][iy, ix] = sc_bg[h]
 
