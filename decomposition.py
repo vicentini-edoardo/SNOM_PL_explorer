@@ -178,6 +178,101 @@ def run_mnf(
     return scores, loadings, snr
 
 
+def run_gnmf(
+    X_valid: np.ndarray,
+    X_full: np.ndarray,
+    valid_idx: np.ndarray,
+    n_components: int,
+    *,
+    graph: str = "spatial",
+    n_neighbors: int = 5,
+    reg_lambda: float = 100.0,
+    max_iter: int = 200,
+    seed: int = 42,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Graph-regularized NMF (Cai et al. 2011).
+
+    Nonnegative matrix factorisation ``X ≈ W H`` with a graph-Laplacian
+    smoothness penalty on ``W`` that favours similar rows (pixels) getting
+    similar scores. ``X_valid`` is shifted to be nonnegative (NMF's
+    requirement), so this also tolerates bgsub/standardize preprocessing.
+
+    Parameters
+    ----------
+    X_valid : (n_valid, det)
+    X_full : (ny, nx, det) – spatial cube, used to build the spatial graph.
+    valid_idx : (n_valid,) – flat indices of valid pixels into ny*nx.
+    n_components : number of factors to retain.
+    graph : ``"spatial"`` (4-neighbor grid adjacency) or ``"spectral"``
+        (k-NN in feature space).
+    n_neighbors : neighbors per node for the spectral graph.
+    reg_lambda : graph regularisation strength.
+    max_iter : multiplicative-update iterations.
+
+    Returns
+    -------
+    scores : (n_valid, k) – W, nonnegative.
+    loadings : (k, det) – H, nonnegative.
+    energy : (k,) – ``||W[:,j]|| * ||H[j,:]||`` per component, descending.
+    """
+    import scipy.sparse as sp
+
+    n_valid, det = X_valid.shape
+    k = max(1, min(n_components, n_valid - 1, det))
+
+    Xnn = X_valid - X_valid.min()
+    np.clip(Xnn, 0.0, None, out=Xnn)
+
+    # ── Graph adjacency (n_valid × n_valid, sparse) ───────────────────────────
+    if graph == "spectral":
+        from sklearn.neighbors import kneighbors_graph
+
+        kk = max(1, min(n_neighbors, n_valid - 1))
+        A = kneighbors_graph(X_valid, kk, mode="connectivity", include_self=False)
+        A = A.maximum(A.T)
+    else:  # spatial: 4-neighbor grid adjacency among valid pixels
+        ny, nx, _ = X_full.shape
+        row_of = np.full(ny * nx, -1, dtype=np.int64)
+        row_of[valid_idx] = np.arange(n_valid)
+        flat_rc = valid_idx
+        rows, cols, vals = [], [], []
+        r = flat_rc // nx
+        c = flat_rc % nx
+        n_flat = ny * nx
+        right = np.where(
+            (c + 1 < nx), row_of[np.minimum(flat_rc + 1, n_flat - 1)], -1
+        )
+        down = np.where(
+            (r + 1 < ny), row_of[np.minimum(flat_rc + nx, n_flat - 1)], -1
+        )
+        for src_row, nbr_flat in ((np.arange(n_valid), right), (np.arange(n_valid), down)):
+            mask = nbr_flat >= 0
+            rows.extend(src_row[mask])
+            cols.extend(nbr_flat[mask])
+            vals.extend([1.0] * int(mask.sum()))
+        A = sp.coo_matrix((vals, (rows, cols)), shape=(n_valid, n_valid))
+        A = A.maximum(A.T)
+        A = A.tocsr()
+
+    D = sp.diags(np.asarray(A.sum(axis=1)).ravel())
+
+    # ── Multiplicative GNMF updates ───────────────────────────────────────────
+    rng = np.random.default_rng(seed)
+    W = rng.random((n_valid, k)) + 1e-3
+    H = rng.random((k, det)) + 1e-3
+    eps = 1e-10
+
+    for _ in range(max_iter):
+        H *= (W.T @ Xnn) / (W.T @ W @ H + eps)
+        AW = A @ W
+        DW = D @ W
+        W *= (Xnn @ H.T + reg_lambda * AW) / (W @ H @ H.T + reg_lambda * DW + eps)
+
+    energy = np.linalg.norm(W, axis=0) * np.linalg.norm(H, axis=1)
+    order = np.argsort(energy)[::-1]
+    return W[:, order], H[order], energy[order]
+
+
 # ── Clustering ────────────────────────────────────────────────────────────────
 
 def categorize(

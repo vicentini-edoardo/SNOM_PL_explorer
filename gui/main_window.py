@@ -58,10 +58,12 @@ class MainWindow(QtWidgets.QMainWindow):
         self._busy = False
 
         self.status_label = QtWidgets.QLabel("No scan loaded")
+        self.status_label.setWordWrap(True)
         self.progress_bar = QtWidgets.QProgressBar()
         self.progress_bar.setTextVisible(False)
         self.progress_bar.hide()
         self.selected_label = QtWidgets.QLabel("ix=-- iy=--")
+        self.selected_label.setWordWrap(True)
         self.folder_combo = QtWidgets.QComboBox()
         self.file_combo = QtWidgets.QComboBox()
         self.roi_start_spin = QtWidgets.QSpinBox()
@@ -89,6 +91,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self.decomp_components_spin = QtWidgets.QSpinBox()
         self.decomp_categorizer_combo = QtWidgets.QComboBox()
         self.decomp_clusters_spin = QtWidgets.QSpinBox()
+        self.decomp_gnmf_graph_combo = QtWidgets.QComboBox()
+        self.decomp_gnmf_neighbors_spin = QtWidgets.QSpinBox()
+        self.decomp_gnmf_lambda_spin = QtWidgets.QDoubleSpinBox()
         self.decomp_bgsub_check = QtWidgets.QCheckBox("Background subtraction")
         self.decomp_l2_check = QtWidgets.QCheckBox("L2 normalise")
         self.decomp_standardize_check = QtWidgets.QCheckBox("Standardise")
@@ -154,6 +159,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 ("params/export_format", self.export_format_combo),
                 ("decomp/method", self.decomp_method_combo),
                 ("decomp/categorizer", self.decomp_categorizer_combo),
+                ("decomp/gnmf_graph", self.decomp_gnmf_graph_combo),
                 ("params/z_drift_scan_mode", self.z_drift_mode_combo),
                 ("params/z_row_level_mode", self.z_row_level_combo),
             ):
@@ -203,6 +209,7 @@ class MainWindow(QtWidgets.QMainWindow):
         settings.setValue("params/export_format", self.export_format_combo.currentText())
         settings.setValue("decomp/method", self.decomp_method_combo.currentText())
         settings.setValue("decomp/categorizer", self.decomp_categorizer_combo.currentText())
+        settings.setValue("decomp/gnmf_graph", self.decomp_gnmf_graph_combo.currentText())
         settings.setValue("decomp/harmonic", self.decomp_harmonic_combo.currentData())
         settings.setValue("params/z_drift_scan_mode", self.z_drift_mode_combo.currentText())
         settings.setValue("params/z_row_level_mode", self.z_row_level_combo.currentText())
@@ -225,6 +232,8 @@ class MainWindow(QtWidgets.QMainWindow):
             ("params/background_neighbor_px", self.background_neighbor_spin),
             ("decomp/components", self.decomp_components_spin),
             ("decomp/clusters", self.decomp_clusters_spin),
+            ("decomp/gnmf_neighbors", self.decomp_gnmf_neighbors_spin),
+            ("decomp/gnmf_lambda", self.decomp_gnmf_lambda_spin),
             ("period/window", self.period_window_spin),
             ("period/max_shift", self.period_max_shift_spin),
             ("period/min_shift", self.period_min_shift_spin),
@@ -263,8 +272,8 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _build_control_panel(self) -> QtWidgets.QWidget:
         panel = QtWidgets.QWidget()
-        panel.setMinimumWidth(280)
-        panel.setMaximumWidth(360)
+        panel.setMinimumWidth(320)
+        panel.setMaximumWidth(400)
         outer = QtWidgets.QVBoxLayout(panel)
         outer.setContentsMargins(6, 6, 6, 6)
         outer.setSpacing(6)
@@ -277,8 +286,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.recompute_btn.clicked.connect(lambda: self.load_selected_scan(True))
 
         source_row = QtWidgets.QHBoxLayout()
-        source_row.addWidget(self.load_btn)
-        source_row.addWidget(self.recompute_btn)
+        source_row.addWidget(self.load_btn, 1)
+        source_row.addWidget(self.recompute_btn, 1)
 
         content = QtWidgets.QWidget()
         content_layout = QtWidgets.QVBoxLayout(content)
@@ -355,6 +364,9 @@ class MainWindow(QtWidgets.QMainWindow):
         self._add_row(form, "Components", self.decomp_components_spin)
         self._add_row(form, "Categorizer", self.decomp_categorizer_combo)
         self._add_row(form, "Clusters", self.decomp_clusters_spin)
+        self._add_row(form, "GNMF graph", self.decomp_gnmf_graph_combo)
+        self._add_row(form, "GNMF neighbors", self.decomp_gnmf_neighbors_spin)
+        self._add_row(form, "GNMF lambda", self.decomp_gnmf_lambda_spin)
         self._add_row(form, "Det start", self.detector_start_spin)
         self._add_row(form, "Det end", self.detector_end_spin)
         form.addRow(self.decomp_bgsub_check)
@@ -362,7 +374,17 @@ class MainWindow(QtWidgets.QMainWindow):
         form.addRow(self.decomp_standardize_check)
         form.addRow(self.decomp_normalize_spectra_check)
         form.addRow(self.decomp_compute_btn)
+        self._decomp_form = form
         return group
+
+    def _update_gnmf_controls_visibility(self) -> None:
+        is_gnmf = self.decomp_method_combo.currentText() == "GNMF"
+        for widget in (
+            self.decomp_gnmf_graph_combo,
+            self.decomp_gnmf_neighbors_spin,
+            self.decomp_gnmf_lambda_spin,
+        ):
+            self._decomp_form.setRowVisible(widget, is_gnmf)
 
     def _build_period_controls(self) -> QtWidgets.QGroupBox:
         group = QtWidgets.QGroupBox("Period max/min")
@@ -422,8 +444,9 @@ class MainWindow(QtWidgets.QMainWindow):
             index = combo.findData(default) if combo.findData(default) >= 0 else combo.findText(default)
             if index >= 0:
                 combo.setCurrentIndex(index)
-        self.decomp_method_combo.addItems(["PCA", "MNF"])
+        self.decomp_method_combo.addItems(["PCA", "MNF", "GNMF"])
         self.decomp_categorizer_combo.addItems(["kmeans", "gmm"])
+        self.decomp_gnmf_graph_combo.addItems(["spatial", "spectral"])
         for spin in (self.roi_start_spin, self.roi_end_spin, self.detector_start_spin, self.detector_end_spin):
             spin.setRange(0, 999_999)
         for spin in (self.row_start_spin, self.row_end_spin):
@@ -439,6 +462,11 @@ class MainWindow(QtWidgets.QMainWindow):
         self.decomp_components_spin.setValue(5)
         self.decomp_clusters_spin.setRange(2, 128)
         self.decomp_clusters_spin.setValue(4)
+        self.decomp_gnmf_neighbors_spin.setRange(1, 50)
+        self.decomp_gnmf_neighbors_spin.setValue(5)
+        self.decomp_gnmf_lambda_spin.setRange(0.0, 10000.0)
+        self.decomp_gnmf_lambda_spin.setValue(100.0)
+        self._update_gnmf_controls_visibility()
         for spin, value in ((self.bg_low_spin, BG_LOW_HZ), (self.bg_high_spin, BG_HIGH_HZ), (self.target_freq_spin, 4.0)):
             spin.setRange(0.0, 1e9)
             spin.setDecimals(6)
@@ -460,6 +488,7 @@ class MainWindow(QtWidgets.QMainWindow):
     def _wire_signals(self) -> None:
         self.folder_combo.currentTextChanged.connect(self._folder_changed)
         self.decomp_compute_btn.clicked.connect(self.compute_decomposition)
+        self.decomp_method_combo.currentTextChanged.connect(self._update_gnmf_controls_visibility)
         self.decomp_normalize_spectra_check.toggled.connect(self._redraw_decomposition_spectra)
         self.export_btn.clicked.connect(self.export_images)
         self.export_data_btn.clicked.connect(self.export_data)
@@ -789,6 +818,9 @@ class MainWindow(QtWidgets.QMainWindow):
             preprocess=preprocess,
             detector_range=(self.detector_start_spin.value(), self.detector_end_spin.value()),
             settings=settings,
+            gnmf_graph=self.decomp_gnmf_graph_combo.currentText() or "spatial",
+            gnmf_neighbors=self.decomp_gnmf_neighbors_spin.value(),
+            gnmf_lambda=self.decomp_gnmf_lambda_spin.value(),
         )
         self._start_worker(worker, self._on_decomposition_done, self._on_decomposition_failed)
 

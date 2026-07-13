@@ -8,6 +8,7 @@ from decomposition import (
     build_feature_matrix,
     categorize,
     category_mean_spectra,
+    run_gnmf,
     run_mnf,
     run_pca,
     scatter_to_map,
@@ -153,6 +154,60 @@ def test_run_mnf_handles_partial_nan_cube():
     )
     scores, _, _ = run_mnf(X_full, valid_idx, n_components=2)
     assert scores.shape[0] == len(valid_idx)
+
+
+# ── run_gnmf ──────────────────────────────────────────────────────────────────
+
+def test_run_gnmf_output_shapes():
+    rng = np.random.default_rng(7)
+    ny, nx, det = 4, 4, 6
+    X_full = rng.random((ny, nx, det)).astype(np.float64)
+    valid_idx = np.arange(ny * nx)
+    X_valid = X_full.reshape(ny * nx, det)
+    scores, loadings, energy = run_gnmf(
+        X_valid, X_full, valid_idx, n_components=3, max_iter=20
+    )
+    assert scores.shape == (ny * nx, 3)
+    assert loadings.shape == (3, det)
+    assert energy.shape == (3,)
+
+
+def test_run_gnmf_nonnegative_factors():
+    rng = np.random.default_rng(8)
+    ny, nx, det = 4, 4, 6
+    X_full = rng.standard_normal((ny, nx, det))  # has negatives on purpose
+    valid_idx = np.arange(ny * nx)
+    X_valid = X_full.reshape(ny * nx, det)
+    scores, loadings, _ = run_gnmf(
+        X_valid, X_full, valid_idx, n_components=2, max_iter=20
+    )
+    assert np.all(scores >= 0)
+    assert np.all(loadings >= 0)
+
+
+def test_run_gnmf_energy_descending():
+    rng = np.random.default_rng(9)
+    X_full = rng.random((5, 5, 8)).astype(np.float64)
+    valid_idx = np.arange(25)
+    X_valid = X_full.reshape(25, 8)
+    _, _, energy = run_gnmf(X_valid, X_full, valid_idx, n_components=4, max_iter=20)
+    assert np.all(np.diff(energy) <= 1e-9)  # non-increasing
+
+
+@pytest.mark.parametrize("graph", ["spatial", "spectral"])
+def test_run_gnmf_both_graph_modes_run(graph):
+    rng = np.random.default_rng(11)
+    ny, nx, det = 4, 4, 6
+    X_full = rng.random((ny, nx, det)).astype(np.float64)
+    valid_idx = np.arange(ny * nx)
+    X_valid = X_full.reshape(ny * nx, det)
+    scores, loadings, energy = run_gnmf(
+        X_valid, X_full, valid_idx, n_components=2, graph=graph,
+        n_neighbors=3, max_iter=20,
+    )
+    assert np.all(np.isfinite(scores))
+    assert np.all(np.isfinite(loadings))
+    assert np.all(np.isfinite(energy))
 
 
 # ── categorize ────────────────────────────────────────────────────────────────

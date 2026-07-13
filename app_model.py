@@ -11,6 +11,7 @@ from decomposition import (
     build_feature_matrix,
     categorize,
     category_mean_spectra,
+    run_gnmf,
     run_mnf,
     run_pca,
     scatter_to_map,
@@ -464,6 +465,9 @@ class SnomAppModel:
         preprocess: Iterable[str],
         detector_range: tuple[int, int],
         settings: MapSettings | None = None,
+        gnmf_graph: str = "spatial",
+        gnmf_neighbors: int = 5,
+        gnmf_lambda: float = 100.0,
     ) -> DecompositionResult:
         bundle = self._require_bundle()
         settings = settings or self.map_settings(harmonic=harmonic)
@@ -507,6 +511,16 @@ class SnomAppModel:
         n_clusters = max(2, min(int(n_clusters), len(X_valid)))
         if method == "MNF":
             scores, _, scree_values = run_mnf(X_full, valid_idx, n_components)
+        elif method == "GNMF":
+            scores, _, scree_values = run_gnmf(
+                X_valid,
+                X_full,
+                valid_idx,
+                n_components,
+                graph=gnmf_graph,
+                n_neighbors=gnmf_neighbors,
+                reg_lambda=gnmf_lambda,
+            )
         else:
             scores, _, scree_values = run_pca(X_valid, n_components)
         labels, centroids = categorize(scores, categorizer, n_clusters)
