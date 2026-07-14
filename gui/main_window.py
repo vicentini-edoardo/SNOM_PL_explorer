@@ -53,6 +53,7 @@ class MainWindow(QtWidgets.QMainWindow):
         apply_theme(self)
         self.model = SnomAppModel(root_dir)
         self._loading_controls = False
+        self._roi_by_file: dict[str, dict[str, list[int]]] = {}
         self.last_decomposition = None
         self._thread_pool = QtCore.QThreadPool.globalInstance()
         self._busy = False
@@ -141,6 +142,12 @@ class MainWindow(QtWidgets.QMainWindow):
         geometry = settings.value("window/geometry")
         if geometry is not None:
             self.restoreGeometry(geometry)
+        raw_roi_by_file = settings.value("params/roi_by_file", "", str)
+        if raw_roi_by_file:
+            try:
+                self._roi_by_file = json.loads(raw_roi_by_file)
+            except (json.JSONDecodeError, TypeError):
+                self._roi_by_file = {}
         for key, splitter in (
             ("window/main_splitter", self.main_splitter),
             ("window/explore_splitter", self.explore_tab.splitter),
@@ -223,7 +230,25 @@ class MainWindow(QtWidgets.QMainWindow):
             settings.setValue(key, spin.value())
         for key, check in self._persisted_checks():
             settings.setValue(key, check.isChecked())
+        self._remember_current_roi()
+        settings.setValue("params/roi_by_file", json.dumps(self._roi_by_file))
         settings.sync()
+
+    def _on_roi_spin_changed(self, _value: int) -> None:
+        if not self._loading_controls:
+            self._remember_current_roi()
+
+    def _current_roi_file_key(self) -> str | None:
+        return str(self.model.summary.path) if self.model.summary else None
+
+    def _remember_current_roi(self) -> None:
+        key = self._current_roi_file_key()
+        if key is None:
+            return
+        self._roi_by_file[key] = {
+            "roi": [self.roi_start_spin.value(), self.roi_end_spin.value()],
+            "roi2": [self.roi2_start_spin.value(), self.roi2_end_spin.value()],
+        }
 
     def _persisted_spins(self) -> list[tuple[str, QtWidgets.QAbstractSpinBox]]:
         return [
@@ -536,6 +561,8 @@ class MainWindow(QtWidgets.QMainWindow):
             selector.currentIndexChanged.connect(self.refresh_plots)
         for selector in self.line_profile_tab.preview_selectors:
             selector.currentIndexChanged.connect(self.refresh_plots)
+        for spin in (self.roi_start_spin, self.roi_end_spin, self.roi2_start_spin, self.roi2_end_spin):
+            spin.valueChanged.connect(self._on_roi_spin_changed)
         for widget in [
             self.roi_start_spin,
             self.roi_end_spin,
@@ -670,10 +697,15 @@ class MainWindow(QtWidgets.QMainWindow):
             self.detector_end_spin,
         ):
             spin.setMaximum(det_max)
-        self.roi_start_spin.setValue(self.model.roi_range[0])
-        self.roi_end_spin.setValue(self.model.roi_range[1])
-        self.roi2_start_spin.setValue(self.model.roi_range2[0])
-        self.roi2_end_spin.setValue(self.model.roi_range2[1])
+        remembered = self._roi_by_file.get(self._current_roi_file_key() or "")
+        if remembered:
+            roi1, roi2 = remembered.get("roi", self.model.roi_range), remembered.get("roi2", self.model.roi_range2)
+        else:
+            roi1, roi2 = self.model.roi_range, self.model.roi_range2
+        self.roi_start_spin.setValue(roi1[0])
+        self.roi_end_spin.setValue(roi1[1])
+        self.roi2_start_spin.setValue(roi2[0])
+        self.roi2_end_spin.setValue(roi2[1])
         self.detector_start_spin.setValue(self.model.detector_range[0])
         self.detector_end_spin.setValue(self.model.detector_range[1])
         self.row_start_spin.setMaximum(row_max)
