@@ -68,6 +68,8 @@ class MainWindow(QtWidgets.QMainWindow):
         self.file_combo = QtWidgets.QComboBox()
         self.roi_start_spin = QtWidgets.QSpinBox()
         self.roi_end_spin = QtWidgets.QSpinBox()
+        self.roi2_start_spin = QtWidgets.QSpinBox()
+        self.roi2_end_spin = QtWidgets.QSpinBox()
         self.detector_start_spin = QtWidgets.QSpinBox()
         self.detector_end_spin = QtWidgets.QSpinBox()
         self.row_start_spin = QtWidgets.QSpinBox()
@@ -304,8 +306,10 @@ class MainWindow(QtWidgets.QMainWindow):
         self._add_row(source_form, "Selected", self.selected_label)
 
         demod_group, demod_form = self._section_form("Demodulation")
-        self._add_row(demod_form, "ROI start", self.roi_start_spin)
-        self._add_row(demod_form, "ROI end", self.roi_end_spin)
+        self._add_row(demod_form, "ROI1 start", self.roi_start_spin)
+        self._add_row(demod_form, "ROI1 end", self.roi_end_spin)
+        self._add_row(demod_form, "ROI2 start", self.roi2_start_spin)
+        self._add_row(demod_form, "ROI2 end", self.roi2_end_spin)
         self._add_row(demod_form, "Target Hz", self.target_freq_spin)
         self._add_row(demod_form, "Nbr bins", self.neighbor_bins_spin)
         demod_form.addRow(self.avg3x3_check)
@@ -416,6 +420,21 @@ class MainWindow(QtWidgets.QMainWindow):
         form.setFieldGrowthPolicy(QtWidgets.QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         return group, form
 
+    @staticmethod
+    def _populate_demod_combo(combo: QtWidgets.QComboBox, *, with_bgsub: bool) -> None:
+        """Fill a demod combo with ROI1/ROI2 (and optional bg-sub) entries.
+
+        Token scheme: harmonic[|bg][@2] — e.g. "1w", "1w|bg", "1w@2", "1w|bg@2".
+        """
+        for harmonic in HARMONICS:
+            label = DEMOD_LABELS[harmonic]
+            combo.addItem(f"{label} ROI1", harmonic)
+            if with_bgsub:
+                combo.addItem(f"{label} ROI1 bg-sub", f"{harmonic}|bg")
+            combo.addItem(f"{label} ROI2", f"{harmonic}@2")
+            if with_bgsub:
+                combo.addItem(f"{label} ROI2 bg-sub", f"{harmonic}|bg@2")
+
     def _populate_static_controls(self) -> None:
         self.decomp_harmonic_combo.clear()
         for harmonic in HARMONICS:
@@ -424,8 +443,7 @@ class MainWindow(QtWidgets.QMainWindow):
         primary_selector, compare_selector, mechanical_selector = self.line_profile_tab.preview_selectors
         for combo in (primary_selector, compare_selector):
             combo.clear()
-            for harmonic in HARMONICS:
-                combo.addItem(DEMOD_LABELS[harmonic], harmonic)
+            self._populate_demod_combo(combo, with_bgsub=False)
         primary_selector.setCurrentIndex(primary_selector.findData("0w"))
         compare_selector.setCurrentIndex(compare_selector.findData("1w"))
         mechanical_selector.clear()
@@ -433,9 +451,7 @@ class MainWindow(QtWidgets.QMainWindow):
         mechanical_selector.setCurrentText("M1P")
         for combo in self.maps_tab.map_selectors[:4]:
             combo.clear()
-            for harmonic in HARMONICS:
-                combo.addItem(DEMOD_LABELS[harmonic], harmonic)
-                combo.addItem(f"{DEMOD_LABELS[harmonic]} bg-sub", f"{harmonic}|bg")
+            self._populate_demod_combo(combo, with_bgsub=True)
         for combo in self.maps_tab.map_selectors[4:]:
             combo.clear()
             combo.addItems(list(SNOM_CHANNELS))
@@ -447,7 +463,14 @@ class MainWindow(QtWidgets.QMainWindow):
         self.decomp_method_combo.addItems(["PCA", "MNF", "GNMF"])
         self.decomp_categorizer_combo.addItems(["kmeans", "gmm"])
         self.decomp_gnmf_graph_combo.addItems(["spatial", "spectral"])
-        for spin in (self.roi_start_spin, self.roi_end_spin, self.detector_start_spin, self.detector_end_spin):
+        for spin in (
+            self.roi_start_spin,
+            self.roi_end_spin,
+            self.roi2_start_spin,
+            self.roi2_end_spin,
+            self.detector_start_spin,
+            self.detector_end_spin,
+        ):
             spin.setRange(0, 999_999)
         for spin in (self.row_start_spin, self.row_end_spin):
             spin.setRange(0, 999_999)
@@ -516,6 +539,8 @@ class MainWindow(QtWidgets.QMainWindow):
         for widget in [
             self.roi_start_spin,
             self.roi_end_spin,
+            self.roi2_start_spin,
+            self.roi2_end_spin,
             self.row_start_spin,
             self.row_end_spin,
             self.target_freq_spin,
@@ -636,10 +661,19 @@ class MainWindow(QtWidgets.QMainWindow):
         self._loading_controls = True
         det_max = self.model.detector_range[1]
         row_max = max(0, (self.model.summary.ny - 1) if self.model.summary else 0)
-        for spin in (self.roi_start_spin, self.roi_end_spin, self.detector_start_spin, self.detector_end_spin):
+        for spin in (
+            self.roi_start_spin,
+            self.roi_end_spin,
+            self.roi2_start_spin,
+            self.roi2_end_spin,
+            self.detector_start_spin,
+            self.detector_end_spin,
+        ):
             spin.setMaximum(det_max)
         self.roi_start_spin.setValue(self.model.roi_range[0])
         self.roi_end_spin.setValue(self.model.roi_range[1])
+        self.roi2_start_spin.setValue(self.model.roi_range2[0])
+        self.roi2_end_spin.setValue(self.model.roi_range2[1])
         self.detector_start_spin.setValue(self.model.detector_range[0])
         self.detector_end_spin.setValue(self.model.detector_range[1])
         self.row_start_spin.setMaximum(row_max)
@@ -652,12 +686,17 @@ class MainWindow(QtWidgets.QMainWindow):
         self._loading_controls = False
 
     @staticmethod
-    def _parse_map_selection(token: str) -> tuple[str, bool]:
-        """Split a demod map-selector token ('1w' or '1w|bg') into (harmonic, bgsub)."""
-        harmonic, _, suffix = token.partition("|")
-        return harmonic, suffix == "bg"
+    def _parse_map_selection(token: str) -> tuple[str, bool, int]:
+        """Split a demod map-selector token into (harmonic, bgsub, roi_idx).
 
-    def _demod_specs(self) -> list[tuple[str, bool]]:
+        Token scheme: harmonic[|bg][@2] — e.g. "1w", "1w|bg", "1w@2", "1w|bg@2".
+        """
+        token, _, roi_suffix = token.partition("@")
+        roi_idx = 2 if roi_suffix == "2" else 1
+        harmonic, _, suffix = token.partition("|")
+        return harmonic, suffix == "bg", roi_idx
+
+    def _demod_specs(self) -> list[tuple[str, bool, int]]:
         return [
             self._parse_map_selection(combo.currentData() or "0w")
             for combo in self.maps_tab.map_selectors[:4]
@@ -665,10 +704,15 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _current_settings(self) -> MapSettings:
         primary_selector, compare_selector, mechanical_selector = self.line_profile_tab.preview_selectors
+        primary_harmonic, _, primary_roi = self._parse_map_selection(primary_selector.currentData() or "0w")
+        compare_harmonic, _, compare_roi = self._parse_map_selection(compare_selector.currentData() or "1w")
         return MapSettings(
-            harmonic=primary_selector.currentData() or "0w",
-            compare_harmonic=compare_selector.currentData() or "1w",
+            harmonic=primary_harmonic,
+            compare_harmonic=compare_harmonic,
+            primary_roi=primary_roi,
+            compare_roi=compare_roi,
             roi_range=(self.roi_start_spin.value(), self.roi_end_spin.value()),
+            roi_range2=(self.roi2_start_spin.value(), self.roi2_end_spin.value()),
             cmap="viridis",
             range_mode="auto",
             color_min=0.0,
@@ -697,9 +741,11 @@ class MainWindow(QtWidgets.QMainWindow):
         maps = self.model.compute_maps(settings)
         selected = self.model.selected_pixel
         specs = self._demod_specs()
-        for widget, (harmonic, bgsub) in zip(self.maps_tab.map_widgets[:4], specs):
-            title = f"{harmonic} bg-sub" if bgsub else f"{harmonic} map"
-            widget.set_image(self.model.demod_map(settings, harmonic, bgsub), title, cmap=settings.cmap, selected=selected)
+        for widget, (harmonic, bgsub, roi_idx) in zip(self.maps_tab.map_widgets[:4], specs):
+            title = f"{harmonic} ROI{roi_idx}" + (" bg-sub" if bgsub else " map")
+            widget.set_image(
+                self.model.demod_map(settings, harmonic, bgsub, roi_idx), title, cmap=settings.cmap, selected=selected
+            )
         for widget, combo in zip(self.maps_tab.map_widgets[4:], self.maps_tab.map_selectors[4:]):
             channel = combo.currentText() or "M1A"
             cmap = PHASE_COLORMAP if channel.endswith("P") else settings.cmap
@@ -717,9 +763,9 @@ class MainWindow(QtWidgets.QMainWindow):
         det_axis = data["det_axis"]
         plot_item = self.inspector_tab.spectrum_plot.getPlotItem()
         legend = plot_item.legend
-        for curve, (harmonic, bgsub), spectrum in zip(self.inspector_tab.spectrum_curves, specs, data["spectra"]):
+        for curve, (harmonic, bgsub, roi_idx), spectrum in zip(self.inspector_tab.spectrum_curves, specs, data["spectra"]):
             curve.setData(det_axis, spectrum)
-            label = f"{harmonic} bg-sub" if bgsub else f"{harmonic} map"
+            label = f"{harmonic} ROI{roi_idx}" + (" bg-sub" if bgsub else " map")
             legend.removeItem(curve)
             legend.addItem(curve, label)
         self.inspector_tab.baseline_curve.setData(det_axis, data["baseline"])
@@ -982,6 +1028,7 @@ class MainWindow(QtWidgets.QMainWindow):
                 "harmonic": settings.harmonic,
                 "compare_harmonic": settings.compare_harmonic,
                 "roi_range": list(settings.roi_range),
+                "roi_range2": list(settings.roi_range2),
                 "bg_low_hz": settings.bg_low_hz,
                 "bg_high_hz": settings.bg_high_hz,
                 "baseline_smooth_px": settings.baseline_smooth_px,
@@ -1054,7 +1101,7 @@ class MainWindow(QtWidgets.QMainWindow):
         )
         files.append(roi_path)
 
-        spectrum_labels = [f"{harmonic}{'_bgsub' if bgsub else ''}" for harmonic, bgsub in specs]
+        spectrum_labels = [f"{harmonic}_ROI{roi_idx}{'_bgsub' if bgsub else ''}" for harmonic, bgsub, roi_idx in specs]
         spectrum_path = out_dir / "detector_spectrum.csv"
         np.savetxt(
             spectrum_path,
@@ -1096,9 +1143,9 @@ class MainWindow(QtWidgets.QMainWindow):
 
     def _selected_map_arrays(self, settings: MapSettings) -> dict[str, np.ndarray]:
         arrays: dict[str, np.ndarray] = {}
-        for index, (harmonic, bgsub) in enumerate(self._demod_specs(), start=1):
-            token = harmonic + ("|bg" if bgsub else "")
-            arrays[self._panel_export_key(index, token)] = self.model.demod_map(settings, harmonic, bgsub)
+        for index, (harmonic, bgsub, roi_idx) in enumerate(self._demod_specs(), start=1):
+            token = harmonic + ("|bg" if bgsub else "") + f"_ROI{roi_idx}"
+            arrays[self._panel_export_key(index, token)] = self.model.demod_map(settings, harmonic, bgsub, roi_idx)
         for index, combo in enumerate(self.maps_tab.map_selectors[4:], start=5):
             channel = combo.currentText() or "M1A"
             arrays[self._panel_export_key(index, channel)] = self.model.snom_map(settings, channel)

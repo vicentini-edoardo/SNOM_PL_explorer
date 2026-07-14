@@ -52,11 +52,19 @@ class ScanSummary:
     metadata: dict
 
 
+# ponytail: hardcoded ROI defaults per instrument geometry; edit constants if detector changes.
+ROI1_DEFAULT = (110, 130)
+ROI2_DEFAULT = (150, 170)
+
+
 @dataclass(frozen=True)
 class MapSettings:
     harmonic: str = "0w"
     compare_harmonic: str = "1w"
     roi_range: tuple[int, int] = (0, 0)
+    roi_range2: tuple[int, int] = (0, 0)
+    primary_roi: int = 1
+    compare_roi: int = 1
     cmap: str = "viridis"
     range_mode: str = "auto"
     color_min: float | None = None
@@ -116,6 +124,7 @@ class SnomAppModel:
         self.summary: ScanSummary | None = None
         self.selected_pixel: tuple[int, int] = (0, 0)
         self.roi_range: tuple[int, int] = (0, 0)
+        self.roi_range2: tuple[int, int] = (0, 0)
         self.detector_range: tuple[int, int] = (0, 0)
         self.line_rows: tuple[int, int] = (0, 0)
         self.target_frequency_hz: float = 4.0
@@ -171,9 +180,8 @@ class SnomAppModel:
         metadata = self.bundle["metadata"]
         ny, nx = int(grid["ny"]), int(grid["nx"])
         det_max = len(self.bundle["det_axis"]) - 1
-        default_start = int(metadata.get("roi_pixel_start", 0))
-        default_end = int(metadata.get("roi_pixel_end", det_max))
-        self.roi_range = _normal_range(default_start, default_end, det_max)
+        self.roi_range = _normal_range(*ROI1_DEFAULT, det_max)
+        self.roi_range2 = _normal_range(*ROI2_DEFAULT, det_max)
         self.detector_range = (0, det_max)
         self.line_rows = (0, min(ny - 1, 4))
         self.selected_pixel = (nx // 2, ny // 2)
@@ -210,9 +218,9 @@ class SnomAppModel:
         )
         return kwargs, bg_kwargs
 
-    def demod_map(self, settings: MapSettings, harmonic: str, bgsub: bool) -> np.ndarray:
+    def demod_map(self, settings: MapSettings, harmonic: str, bgsub: bool, roi_idx: int = 1) -> np.ndarray:
         bundle = self._require_bundle()
-        roi_ps, roi_pe = settings.roi_range
+        roi_ps, roi_pe = settings.roi_range if roi_idx == 1 else settings.roi_range2
         kwargs, bg_kwargs = self._demod_kwargs(settings)
         if bgsub:
             return get_demod_map_bgsub_live(bundle, harmonic, roi_ps, roi_pe, **bg_kwargs)
@@ -231,10 +239,10 @@ class SnomAppModel:
         return result
 
     def compute_maps(self, settings: MapSettings) -> dict[str, np.ndarray]:
-        primary = self.demod_map(settings, settings.harmonic, False)
-        primary_bgsub = self.demod_map(settings, settings.harmonic, True)
-        compare = self.demod_map(settings, settings.compare_harmonic, False)
-        compare_bgsub = self.demod_map(settings, settings.compare_harmonic, True)
+        primary = self.demod_map(settings, settings.harmonic, False, settings.primary_roi)
+        primary_bgsub = self.demod_map(settings, settings.harmonic, True, settings.primary_roi)
+        compare = self.demod_map(settings, settings.compare_harmonic, False, settings.compare_roi)
+        compare_bgsub = self.demod_map(settings, settings.compare_harmonic, True, settings.compare_roi)
         return {
             "primary": primary,
             "primary_bgsub": primary_bgsub,
@@ -246,7 +254,7 @@ class SnomAppModel:
         }
 
     def compute_inspector(
-        self, settings: MapSettings, specs: list[tuple[str, bool]] | None = None
+        self, settings: MapSettings, specs: list[tuple] | None = None
     ) -> dict[str, np.ndarray]:
         bundle = self._require_bundle()
         ix, iy = self.selected_pixel
@@ -266,7 +274,7 @@ class SnomAppModel:
             get_detector_spectrum_bgsub_live(bundle, harmonic, sl_y, sl_x, **bg_common, **common)
             if bgsub
             else get_detector_spectrum_live(bundle, harmonic, sl_y, sl_x, **common)
-            for harmonic, bgsub in specs
+            for harmonic, bgsub, *_ in specs
         ]
         return {
             "det_axis": bundle["det_axis"],

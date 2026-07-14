@@ -75,11 +75,29 @@ def test_model_loads_scan_and_initializes_defaults(tmp_path):
 
     assert summary.path == scan_path
     assert model.selected_pixel == (1, 1)
-    assert model.roi_range == (1, 2)
+    # ROI1/ROI2 defaults are fixed instrument-geometry constants (110-130 / 150-170),
+    # clamped to this fixture's tiny 4-pixel detector.
+    assert model.roi_range == (3, 3)
+    assert model.roi_range2 == (3, 3)
     assert model.detector_range == (0, 3)
     assert model.line_rows == (0, 1)
     assert model.target_frequency_hz == 4.0
     assert (tmp_path / "_cache" / "mini.proc.npz").exists()
+
+
+def test_demod_map_roi_idx_selects_roi_range_vs_roi_range2(tmp_path):
+    _write_grid_scan(tmp_path / "mini.h5")
+    model = SnomAppModel(tmp_path)
+    model.load_scan(".", "mini.h5", recompute=True)
+
+    # 0w (DC) is the per-pixel mean of the raw trace, which varies with
+    # detector pixel index in the fixture (baseline = 100 + pixel), so it
+    # is sensitive to which ROI slice is averaged.
+    settings = MapSettings(roi_range=(0, 0), roi_range2=(2, 3))
+    map_roi1 = model.demod_map(settings, "0w", False, roi_idx=1)
+    map_roi2 = model.demod_map(settings, "0w", False, roi_idx=2)
+
+    assert not np.allclose(map_roi1, map_roi2, equal_nan=True)
 
 
 def test_model_computes_dash_equivalent_maps_and_inspector_data(tmp_path):

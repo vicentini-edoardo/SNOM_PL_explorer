@@ -55,8 +55,12 @@ def test_loading_scan_initializes_controls_and_plots(qtbot, tmp_path):
     _load_scan_and_wait(window, qtbot)
 
     assert window.model.bundle is not None
-    assert window.roi_start_spin.value() == 1
-    assert window.roi_end_spin.value() == 2
+    # ROI1/ROI2 defaults are fixed instrument-geometry constants, clamped to
+    # this fixture's tiny 4-pixel detector.
+    assert window.roi_start_spin.value() == 3
+    assert window.roi_end_spin.value() == 3
+    assert window.roi2_start_spin.value() == 3
+    assert window.roi2_end_spin.value() == 3
     assert window.detector_start_spin.value() == 0
     assert window.detector_end_spin.value() == 3
     assert window.maps_tab.primary_map.image is not None
